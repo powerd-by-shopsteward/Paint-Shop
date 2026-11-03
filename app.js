@@ -2926,11 +2926,17 @@ function openProductForm(existing) {
         });
       }
 
-      await syncDB();
+           await syncDB();
       toast(isEdit ? 'Product updated' : 'Product added', 'success');
       closeModal(root);
-      route();
-    };
+
+      // If it's a new batch product, send them straight to add sizes (1L, 4L, etc.)
+      if (!isEdit && isBatchNow) {
+        toast('Now add shades or sizes for this product', 'info');
+        location.hash = '#/product/' + res.data.id + '/variants';
+      } else {
+        route();
+      }
   });
 }
 /* ══════════════════════════════════════════════════════════════════
@@ -5543,7 +5549,7 @@ function openCustomerPickerModal(onPick) {
 function openVariantPickerModal(onPick) {
   openModal(`
     <div class="modal-header">
-      <div class="modal-title">Add Product</div>
+      <div class="modal-title">Add Item to Invoice</div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
@@ -5574,10 +5580,29 @@ function openVariantPickerModal(onPick) {
       }).filter(Boolean);
 
       const filtered = items.filter(it => !q || it.hay.includes(q)).slice(0, 60);
-
       const box = root.querySelector('#vp-list');
+
+      // SMART EMPTY STATES
       if (filtered.length === 0) {
-        box.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="empty-icon">🎨</div><div class="empty-title">No matches</div></div>';
+        if (DB.products.length === 0) {
+          box.innerHTML = `
+            <div class="empty-state" style="padding:30px 10px;">
+              <div class="empty-icon">📦</div>
+              <div class="empty-title">No products in your shop</div>
+              <div class="empty-desc" style="margin-bottom:16px;">You haven't added any products yet. Add one to start billing.</div>
+              <button class="btn btn-primary" onclick="closeModal(); openProductForm();" style="margin: 0 auto;">+ Add First Product</button>
+            </div>`;
+        } else if (DB.variants.length === 0) {
+          box.innerHTML = `
+            <div class="empty-state" style="padding:30px 10px;">
+              <div class="empty-icon">🎨</div>
+              <div class="empty-title">No sizes or shades added</div>
+              <div class="empty-desc" style="margin-bottom:16px;">You created products, but they don't have sizes (like 1L, 4L, 10kg) yet. Go to Products and click <b>Variants</b> to add sizes.</div>
+              <button class="btn btn-primary" onclick="closeModal(); location.hash='#/products';" style="margin: 0 auto;">Go to My Items</button>
+            </div>`;
+        } else {
+          box.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="empty-icon">🔍</div><div class="empty-title">No matches found</div></div>';
+        }
         return;
       }
 
