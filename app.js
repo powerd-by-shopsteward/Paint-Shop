@@ -2738,7 +2738,7 @@ async function deleteProduct(id) {
 function openProductForm(existing) {
   const isEdit = !!existing;
   const p = existing || {
-    brand_id: null, name: '', category: 'Paint', unit_base: 'L',
+    brand_id: null, name: '', category: 'Paint', unit_base: 'kg', // Default to kg
     batch_managed: true, gst_rate_default: 0, low_stock_alert: SETTINGS.low_stock_alert_default || 5, notes: ''
   };
 
@@ -2786,8 +2786,8 @@ function openProductForm(existing) {
 
         <div class="grid-2">
           <div>
-            <label class="label">Base Unit</label>
-            <select class="input" name="unit_base">${unitOptions}</select>
+            <label class="label">Base Unit (Weight/Volume)</label>
+            <select class="input" name="unit_base" id="pf-unit">${unitOptions}</select>
           </div>
           <div>
             <label class="label">GST Rate (%)</label>
@@ -2798,24 +2798,38 @@ function openProductForm(existing) {
         <!-- NON-BATCH PRICING (Shows instantly when toggle is off) -->
         <div id="pf-pricing-block" style="display:${isBatchManaged ? 'none' : 'block'};padding:16px;background:var(--primary-light);border-radius:8px;border:1px solid var(--primary);">
           <div style="font-size:12px;font-weight:700;color:var(--primary);margin-bottom:12px;text-transform:uppercase;">Pricing & Stock</div>
+          
           <div class="grid-2" style="margin-bottom:12px;">
             <div>
-              <label class="label">Cost Price (₹)</label>
+              <label class="label">How many units in 1 Pack?</label>
+              <input class="input" type="number" step="any" min="1" name="pack_size" id="pf-pack" value="1" placeholder="e.g. 10 (for a 10kg bucket)">
+              <div class="field-hint">Leave 1 if selling loose (per kg)</div>
+            </div>
+            <div>
+              <label class="label">Opening Stock (in Packs)</label>
+              <input class="input" type="number" step="any" min="0" name="stock" id="pf-stock" value="0" placeholder="e.g. 10 buckets">
+            </div>
+          </div>
+
+          <!-- Live Calculator -->
+          <div id="pf-calc" style="display:none;background:#fff;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;border:1px dashed var(--primary);font-weight:600;color:var(--text-main);">
+            <!-- JS updates this -->
+          </div>
+
+          <div class="grid-2" style="margin-bottom:12px;">
+            <div>
+              <label class="label">Cost Price (₹ / Pack)</label>
               <input class="input" type="number" step="any" min="0" name="cost" value="0">
             </div>
             <div>
-              <label class="label">Selling Price (₹)</label>
+              <label class="label">Selling Price (₹ / Pack)</label>
               <input class="input" type="number" step="any" min="0" name="selling_price" value="0">
             </div>
           </div>
           <div class="grid-2">
-            <div>
-              <label class="label">MRP (₹)</label>
+             <div>
+              <label class="label">MRP (₹ / Pack)</label>
               <input class="input" type="number" step="any" min="0" name="mrp" value="0">
-            </div>
-            <div>
-              <label class="label">Opening Stock</label>
-              <input class="input" type="number" step="any" min="0" name="stock" value="0">
             </div>
           </div>
         </div>
@@ -2830,8 +2844,28 @@ function openProductForm(existing) {
   `, (root) => {
     const toggle = root.querySelector('#pf-batch');
     const block = root.querySelector('#pf-pricing-block');
+    const packInput = root.querySelector('#pf-pack');
+    const stockInput = root.querySelector('#pf-stock');
+    const unitSelect = root.querySelector('#pf-unit');
+    const calcBox = root.querySelector('#pf-calc');
 
-    // Toggle pricing block instantly when checkbox changes
+    function updateCalculator() {
+      const pack = Number(packInput.value) || 1;
+      const packs = Number(stockInput.value) || 0;
+      const unit = unitSelect.value;
+      
+      if (pack > 1 && packs > 0) {
+        calcBox.style.display = 'block';
+        calcBox.innerHTML = `Total base stock: <span style="color:var(--primary);font-size:14px;">${packs * pack} ${unit}</span> (${packs} packs × ${pack} ${unit})`;
+      } else {
+        calcBox.style.display = 'none';
+      }
+    }
+
+    if (packInput) packInput.addEventListener('input', updateCalculator);
+    if (stockInput) stockInput.addEventListener('input', updateCalculator);
+    if (unitSelect) unitSelect.addEventListener('change', updateCalculator);
+
     if (toggle) {
       toggle.onchange = (e) => {
         block.style.display = e.target.checked ? 'none' : 'block';
@@ -2844,12 +2878,16 @@ function openProductForm(existing) {
 
       const fd = new FormData(form);
       const isBatchNow = isEdit ? (existing.batch_managed !== false) : !!fd.get('batch_managed');
+      const packSize = Number(fd.get('pack_size')) || 1;
+      const stockPacks = Number(fd.get('stock')) || 0;
+      const totalBaseStock = stockPacks * packSize;
+      const baseUnit = fd.get('unit_base') || 'kg';
 
       const data = {
         name:             (fd.get('name') || '').trim(),
         brand_id:         fd.get('brand_id') || null,
         category:         fd.get('category') || 'Other',
-        unit_base:        fd.get('unit_base') || 'L',
+        unit_base:        baseUnit,
         batch_managed:    isBatchNow,
         gst_rate_default: Number(fd.get('gst_rate_default')) || 0,
         low_stock_alert:  Number(fd.get('low_stock_alert')) || 5,
@@ -2871,17 +2909,19 @@ function openProductForm(existing) {
         return;
       }
 
-      // 2. Auto-create hidden variant if NON-BATCH (so you don't have to)
+      // 2. Auto-create hidden variant if NON-BATCH
       if (!isBatchNow && !isEdit) {
         await sb.from('variants').insert({
           product_id:      res.data.id,
           shade_name:      '',
-          pack_size:       1,
-          pack_unit:       data.unit_base,
+          pack_size:       packSize,
+          pack_unit:       baseUnit,
+          conversion_factor: packSize, // Crucial for invoice deductions
+          loose_unit:      baseUnit,
           cost:            Number(fd.get('cost')) || 0,
           mrp:             Number(fd.get('mrp')) || 0,
           selling_price:   Number(fd.get('selling_price')) || 0,
-          stock:           Number(fd.get('stock')) || 0,
+          stock:           totalBaseStock, // Save the calculated total (e.g. 100)
           low_stock_alert: data.low_stock_alert
         });
       }
