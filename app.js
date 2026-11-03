@@ -569,22 +569,20 @@ const NAV_LINKS = [
   ]},
   { group: 'Catalog', items: [
     { href: '#/brands',    icon: '🏷️', label: 'Brands'    },
-    { href: '#/products',  icon: '🎨', label: 'Products'  },
-    { href: '#/batches',   icon: '📦', label: 'Batches'   },
+    { href: '#/products',  icon: '🎨', label: 'My Items'  },
     { href: '#/colorants', icon: '🎨', label: 'Colorants' }
   ]},
   { group: 'Finance', items: [
-  { href: '#/expenses',  icon: '💸', label: 'Expenses'  }
-]},
-{ group: 'Reports', items: [
-  { href: '#/reports',   icon: '📈', label: 'Reports'   },
-  { href: '#/pnl',       icon: '💹', label: 'P&L'       },
-  { href: '#/margin',    icon: '📊', label: 'Margin'    }
-]},
- { group: 'Settings', items: [
-  { href: '#/myshop',    icon: '⚙️', label: 'My Shop'   },
-  { href: '#/backup',    icon: '💾', label: 'Backup'    }
-]}
+    { href: '#/expenses',  icon: '💸', label: 'Expenses'  }
+  ]},
+  { group: 'Reports', items: [
+    { href: '#/reports',   icon: '📈', label: 'Reports'   },
+    { href: '#/pnl',       icon: '💹', label: 'P&L'       }
+  ]},
+  { group: 'Settings', items: [
+    { href: '#/myshop',    icon: '⚙️', label: 'My Shop'   },
+    { href: '#/backup',    icon: '💾', label: 'Backup'    }
+  ]}
 ];
 
 const MOBILE_NAV_ITEMS = [
@@ -2740,99 +2738,31 @@ async function deleteProduct(id) {
 function openProductForm(existing) {
   const isEdit = !!existing;
   const p = existing || {
-    brand_id: null,
-    name: '',
-    category: 'Paint',
-    unit_base: 'L',
-    batch_managed: true,
-    gst_rate_default: 0,
-    low_stock_alert: SETTINGS.low_stock_alert_default || 5,
-    notes: ''
+    brand_id: null, name: '', category: 'Paint', unit_base: 'L',
+    batch_managed: true, gst_rate_default: 0, low_stock_alert: SETTINGS.low_stock_alert_default || 5, notes: ''
   };
 
   const brandOptions = DB.brands.length === 0
-    ? `<option value="">— No brands yet (add one in Brands page) —</option>`
+    ? `<option value="">— No brands yet —</option>`
     : `<option value="">— Select brand —</option>` +
-      DB.brands
-        .slice()
-        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-        .map(b => `<option value="${b.id}" ${p.brand_id === b.id ? 'selected' : ''}>${esc(b.name)}</option>`)
-        .join('');
+      DB.brands.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(b => `<option value="${b.id}" ${p.brand_id === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('');
 
-  const catOptions = PRODUCT_CATEGORIES
-    .map(c => `<option value="${esc(c)}" ${p.category === c ? 'selected' : ''}>${esc(c)}</option>`)
-    .join('');
-
-  const unitOptions = BASE_UNITS
-    .map(u => `<option value="${esc(u)}" ${p.unit_base === u ? 'selected' : ''}>${esc(u)}</option>`)
-    .join('');
-
+  const catOptions = PRODUCT_CATEGORIES.map(c => `<option value="${esc(c)}" ${p.category === c ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  const unitOptions = BASE_UNITS.map(u => `<option value="${esc(u)}" ${p.unit_base === u ? 'selected' : ''}>${esc(u)}</option>`).join('');
   const isBatchManaged = p.batch_managed !== false;
 
   openModal(`
-    <style>
-      .toggle-row {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        padding: 14px 16px;
-        background: var(--bg-app);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        cursor: pointer;
-      }
-      .toggle-row:hover { background: var(--primary-light); }
-      .toggle-row.disabled { opacity: 0.7; cursor: not-allowed; }
-      .toggle-switch {
-        position: relative;
-        width: 44px;
-        height: 24px;
-        flex-shrink: 0;
-      }
-      .toggle-switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-      }
-      .toggle-slider {
-        position: absolute;
-        inset: 0;
-        background: var(--border);
-        border-radius: 999px;
-        transition: background 0.2s ease;
-      }
-      .toggle-slider::before {
-        content: "";
-        position: absolute;
-        left: 2px;
-        top: 2px;
-        width: 20px;
-        height: 20px;
-        background: #fff;
-        border-radius: 50%;
-        transition: transform 0.2s ease;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-      }
-      .toggle-switch input:checked + .toggle-slider {
-        background: var(--primary);
-      }
-      .toggle-switch input:checked + .toggle-slider::before {
-        transform: translateX(20px);
-      }
-    </style>
-
     <div class="modal-header">
-      <div class="modal-title">${isEdit ? 'Edit' : 'New'} Product</div>
+      <div class="modal-title">${isEdit ? 'Edit' : 'Add'} Product</div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
 
     <div class="modal-body">
       <form id="pf" style="display:flex;flex-direction:column;gap:16px;">
-
+        
         <div>
           <label class="label">Product Name *</label>
-          <input class="input" name="name" required value="${esc(p.name || '')}" placeholder="e.g. Royale Luxury Emulsion" autofocus>
-          <div class="field-hint">This is the product line — shades and sizes go under it as variants.</div>
+          <input class="input" name="name" required value="${esc(p.name || '')}" placeholder="e.g. Royale Luxury Emulsion or Paint Brush" autofocus>
         </div>
 
         <div class="grid-2">
@@ -2846,43 +2776,48 @@ function openProductForm(existing) {
           </div>
         </div>
 
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:14px;background:var(--bg-app);border-radius:8px;border:1px solid var(--border);cursor:pointer;">
+          <div>
+            <b style="font-size:13px;color:var(--text-main);">Track by Batch</b>
+            <div class="field-hint" style="margin-top:2px;">Turn OFF for brushes, tapes, tools</div>
+          </div>
+          <input type="checkbox" name="batch_managed" id="pf-batch" ${isBatchManaged ? 'checked' : ''} ${isEdit ? 'disabled' : ''} style="width:20px;height:20px;accent-color:var(--primary);">
+        </label>
+
         <div class="grid-2">
           <div>
             <label class="label">Base Unit</label>
             <select class="input" name="unit_base">${unitOptions}</select>
-            <div class="field-hint">e.g. L for paint, kg for putty, pc for brushes</div>
           </div>
           <div>
-            <label class="label">Default GST Rate (%)</label>
-            <input class="input" type="number" step="any" min="0" max="100" name="gst_rate_default" value="${Number(p.gst_rate_default) || 0}">
-            <div class="field-hint">Can override per line at billing time</div>
+            <label class="label">GST Rate (%)</label>
+            <input class="input" type="number" step="any" min="0" name="gst_rate_default" value="${Number(p.gst_rate_default) || 0}">
           </div>
         </div>
 
-        <label class="toggle-row ${isEdit ? 'disabled' : ''}" style="${isEdit ? 'pointer-events:none;' : ''}">
-          <div style="flex:1;min-width:0;">
-            <div style="font-weight:600;font-size:13px;color:var(--text-main);">Track by batch</div>
-            <div class="field-hint" style="margin-top:2px;">
-              ${isEdit
-                ? '⚠️ Cannot be changed after creation — delete and re-create if you need to switch'
-                : 'ON for paint, primer, putty (batch no + MFG date). OFF for accessories (brushes, tapes etc.)'}
+        <!-- NON-BATCH PRICING (Shows instantly when toggle is off) -->
+        <div id="pf-pricing-block" style="display:${isBatchManaged ? 'none' : 'block'};padding:16px;background:var(--primary-light);border-radius:8px;border:1px solid var(--primary);">
+          <div style="font-size:12px;font-weight:700;color:var(--primary);margin-bottom:12px;text-transform:uppercase;">Pricing & Stock</div>
+          <div class="grid-2" style="margin-bottom:12px;">
+            <div>
+              <label class="label">Cost Price (₹)</label>
+              <input class="input" type="number" step="any" min="0" name="cost" value="0">
+            </div>
+            <div>
+              <label class="label">Selling Price (₹)</label>
+              <input class="input" type="number" step="any" min="0" name="selling_price" value="0">
             </div>
           </div>
-          <div class="toggle-switch">
-            <input type="checkbox" name="batch_managed" ${isBatchManaged ? 'checked' : ''} ${isEdit ? 'disabled' : ''}>
-            <span class="toggle-slider"></span>
+          <div class="grid-2">
+            <div>
+              <label class="label">MRP (₹)</label>
+              <input class="input" type="number" step="any" min="0" name="mrp" value="0">
+            </div>
+            <div>
+              <label class="label">Opening Stock</label>
+              <input class="input" type="number" step="any" min="0" name="stock" value="0">
+            </div>
           </div>
-        </label>
-
-        <div>
-          <label class="label">Low Stock Alert at</label>
-          <input class="input" type="number" step="any" min="0" name="low_stock_alert" value="${Number(p.low_stock_alert) || 0}">
-          <div class="field-hint">Warn me when total stock drops to this level (per variant)</div>
-        </div>
-
-        <div>
-          <label class="label">Notes</label>
-          <textarea class="input" name="notes" placeholder="Optional">${esc(p.notes || '')}</textarea>
         </div>
 
       </form>
@@ -2893,15 +2828,14 @@ function openProductForm(existing) {
       <button type="button" class="btn btn-primary" id="pf-save">${isEdit ? 'Update' : 'Save'}</button>
     </div>
   `, (root) => {
-    const nameInput = root.querySelector('[name="name"]');
-    if (nameInput) {
-      nameInput.focus();
-      nameInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          root.querySelector('#pf-save').click();
-        }
-      });
+    const toggle = root.querySelector('#pf-batch');
+    const block = root.querySelector('#pf-pricing-block');
+
+    // Toggle pricing block instantly when checkbox changes
+    if (toggle) {
+      toggle.onchange = (e) => {
+        block.style.display = e.target.checked ? 'none' : 'block';
+      };
     }
 
     root.querySelector('#pf-save').onclick = async () => {
@@ -2909,55 +2843,47 @@ function openProductForm(existing) {
       if (!form.reportValidity()) return;
 
       const fd = new FormData(form);
-      const name = (fd.get('name') || '').trim();
-      if (!name) {
-        toast('Product name is required', 'error');
-        return;
-      }
-
-      const isBatchNow = isEdit
-        ? (existing.batch_managed !== false)
-        : !!fd.get('batch_managed');
+      const isBatchNow = isEdit ? (existing.batch_managed !== false) : !!fd.get('batch_managed');
 
       const data = {
-        name,
+        name:             (fd.get('name') || '').trim(),
         brand_id:         fd.get('brand_id') || null,
-        category:         (fd.get('category') || 'Other').trim(),
-        unit_base:        (fd.get('unit_base') || 'L').trim(),
+        category:         fd.get('category') || 'Other',
+        unit_base:        fd.get('unit_base') || 'L',
         batch_managed:    isBatchNow,
         gst_rate_default: Number(fd.get('gst_rate_default')) || 0,
-        low_stock_alert:  Number(fd.get('low_stock_alert')) || 0,
+        low_stock_alert:  Number(fd.get('low_stock_alert')) || 5,
         notes:            (fd.get('notes') || '').trim()
       };
-
-      // Duplicate name check within same brand
-      const dup = DB.products.find(x =>
-        (x.name || '').toLowerCase() === name.toLowerCase() &&
-        (x.brand_id || null) === (data.brand_id || null) &&
-        (!existing || x.id !== existing.id)
-      );
-      if (dup) {
-        toast('A product with this name already exists under this brand', 'error');
-        return;
-      }
 
       const btn = root.querySelector('#pf-save');
       btn.disabled = true;
       btn.textContent = 'Saving...';
 
+      // 1. Save Product
       let res;
-      if (isEdit) {
-        res = await sb.from('products').update(data).eq('id', existing.id).select().single();
-      } else {
-        res = await sb.from('products').insert(data).select().single();
-      }
+      if (isEdit) res = await sb.from('products').update(data).eq('id', existing.id).select().single();
+      else        res = await sb.from('products').insert(data).select().single();
 
       if (res.error) {
-        console.error(res.error);
-        toast('Failed to save product: ' + (res.error.message || 'unknown'), 'error');
-        btn.disabled = false;
-        btn.textContent = isEdit ? 'Update' : 'Save';
+        toast('Failed to save product', 'error');
+        btn.disabled = false; btn.textContent = 'Save';
         return;
+      }
+
+      // 2. Auto-create hidden variant if NON-BATCH (so you don't have to)
+      if (!isBatchNow && !isEdit) {
+        await sb.from('variants').insert({
+          product_id:      res.data.id,
+          shade_name:      '',
+          pack_size:       1,
+          pack_unit:       data.unit_base,
+          cost:            Number(fd.get('cost')) || 0,
+          mrp:             Number(fd.get('mrp')) || 0,
+          selling_price:   Number(fd.get('selling_price')) || 0,
+          stock:           Number(fd.get('stock')) || 0,
+          low_stock_alert: data.low_stock_alert
+        });
       }
 
       await syncDB();
