@@ -1,118 +1,41 @@
 /* ══════════════════════════════════════════════════════════════════
-   FINORA — PAINT SHOP MANAGER
-   FILE: app.js
-   BLOCK 1: Core, Utilities, Data Sync, Auth, Subscription, Layout
+   FINORA PAINT SHOP — PART 1 (CORE, LOGIN, DASHBOARD)
    ══════════════════════════════════════════════════════════════════ */
 
-/* ─────────────────────────────────────────────
-   1. SAFE SUPABASE INITIALIZATION
-   ───────────────────────────────────────────── */
+/* ─── 1. SAFE SUPABASE INIT ─────────────────────────────────────── */
 let sb = null;
-(function initSupabase() {
-  try {
-    const cfg = window.APP_CONFIG || {};
-    if(!cfg.SUPABASE_URL || cfg.SUPABASE_URL === 'YOUR_SUPABASE_URL') {
-      throw new Error('Configuration missing. Please add your Supabase URL and Key in index.html');
-    }
-    sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-  } catch(e) {
-    console.error('[Finora] Init failed:', e);
-    document.addEventListener('DOMContentLoaded', () => {
-      const app = document.getElementById('app');
-      if(app) {
-        app.innerHTML = '<div style="padding:40px;text-align:center;font-family:sans-serif;">' +
-          '<h1 style="color:#dc2626;">⚠️ Configuration Required</h1>' +
-          '<p style="color:#6b7280;">' + e.message + '</p></div>';
-      }
-    });
+try {
+  const cfg = window.APP_CONFIG || {};
+  if(!cfg.SUPABASE_URL || cfg.SUPABASE_URL === 'YOUR_SUPABASE_URL_HERE') {
+    throw new Error("Please put your real Supabase URL and Key inside index.html");
   }
-})();
+  sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+} catch (e) {
+  document.body.innerHTML = `
+    <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:#F4F7FE; font-family:sans-serif; padding:20px;">
+      <div style="background:white; padding:40px; border-radius:20px; box-shadow:0 10px 30px rgba(0,0,0,0.1); text-align:center; max-width:500px;">
+        <div style="font-size:40px; margin-bottom:16px;">⚠️</div>
+        <h1 style="color:#EE5D50; font-size:20px; margin-bottom:8px;">Configuration Error</h1>
+        <p style="color:#1B2559; font-size:14px;">${e.message}</p>
+      </div>
+    </div>`;
+  throw e;
+}
 
-/* ─────────────────────────────────────────────
-   2. CONSTANTS & GLOBAL STATE
-   ───────────────────────────────────────────── */
-const PRODUCT_UNITS = ['Litre', 'ml', 'kg', 'gram', 'piece', 'box', 'bucket'];
-const PAINT_CATEGORIES = ['Emulsion', 'Enamel', 'Primer', 'Distemper', 'Wood Finish', 'Waterproofing', 'Brushes & Tools', 'Other'];
-const GST_RATES = [0, 5, 12, 18, 28];
-
-const INVOICE_PREFIX = 'INV-';
-const RETURN_PREFIX  = 'RET-';
-
+/* ─── 2. GLOBAL STATE ───────────────────────────────────────────── */
 let SESSION = null;
-let charts  = [];
+let charts = [];
+let DB = { products: [], product_batches: [], customers: [], suppliers: [], invoices: [], invoice_items: [], supplier_invoices: [], supplier_invoice_items: [], expenses: [] };
+let SETTINGS = { shop_name: 'Finora Paints', owner_name: 'Owner', gst_rate: 18 };
+window.SUB = { loaded: false, active: true, expires_at: null };
 
-let SETTINGS = {
-  shop_name: 'Finora Paints',
-  owner_name: 'Owner',
-  address: '',
-  city: '',
-  phone: '',
-  email: '',
-  gst_enabled: false,
-  gst_number: '',
-  gst_rate: 18,
-  near_expiry_days: 180,
-  enable_non_batch: true,
-  print_footer: 'Thank you for your business!',
-  loaded: false
-};
-
-const DB = {
-  customers: [], suppliers: [], products: [], product_batches: [],
-  invoices: [], invoice_items: [], payments: [],
-  supplier_invoices: [], supplier_invoice_items: [], supplier_payments: [],
-  returns: [], expenses: [], settings: null
-};
-
-window.DB_SYNCED       = false;
-window.DB_SYNC_ERRORS  = [];
-window.DB_SYNCING      = false;
-
-window.SUB = {
-  loaded: false,
-  active: true,
-  expires_at: null,
-  last_paid_at: null
-};
-
-/* ─────────────────────────────────────────────
-   3. DOM HELPERS & UTILS
-   ───────────────────────────────────────────── */
-const $  = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
+/* ─── 3. UTILITIES ──────────────────────────────────────────────── */
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const todayStr = () => new Date().toISOString().slice(0, 10);
-
-const fmtDate = (d) => {
-  if(!d) return '-';
-  const s = String(d).slice(0, 10);
-  const dt = new Date(s);
-  if(isNaN(dt.getTime())) return '-';
-  return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-};
-
-const txDate = (r, k) => (r && (r[k] || (r.created_at ? r.created_at.slice(0, 10) : ''))) || '';
-
-function inr(n) {
-  const num = Number(n || 0);
-  const neg = num < 0;
-  const s   = Math.abs(num).toFixed(2);
-  const p   = s.split('.');
-  let intPart = p[0];
-  const decPart = p[1];
-  if(intPart.length > 3) {
-    const last3 = intPart.slice(-3);
-    const rest  = intPart.slice(0, -3);
-    intPart = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + last3;
-  }
-  return (neg ? '-' : '') + intPart + '.' + decPart;
-}
-const rs = (n) => '₹' + inr(n);
-const fmtNum = (n) => Number(n || 0) % 1 === 0 ? String(n) : Number(n).toFixed(2);
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const rs = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function toast(msg, type = 'info') {
   const root = $('#toast-root');
@@ -121,851 +44,532 @@ function toast(msg, type = 'info') {
   el.className = 'toast toast-' + type;
   el.textContent = msg;
   root.appendChild(el);
-  setTimeout(() => el.remove(), 3200);
+  setTimeout(() => el.remove(), 3000);
 }
 
 function openModal(html, onMount) {
   const root = $('#modal-root');
-  if(!root) return null;
-  const wrap = document.createElement('div');
-  wrap.className = 'modal-overlay';
-  wrap.innerHTML = `<div class="modal">${html}</div>`;
-  wrap.addEventListener('click', (e) => { if(e.target === wrap) closeModal(wrap); });
-  root.appendChild(wrap);
-  if(onMount) onMount(wrap);
-  return wrap;
+  root.innerHTML = `<div class="modal-overlay"><div class="modal">${html}<button class="modal-close" onclick="document.getElementById('modal-root').innerHTML=''">✕</button></div></div>`;
+  if(onMount) onMount(root);
 }
+function closeModal() { $('#modal-root').innerHTML = ''; }
 
-function closeModal(el) {
-  const root = $('#modal-root');
-  if(!root) return;
-  if(el && el.parentNode === root) root.removeChild(el);
-  else { const last = root.lastElementChild; if(last) root.removeChild(last); }
-}
-
-/* ─────────────────────────────────────────────
-   4. DATA SYNC & AUTH
-   ───────────────────────────────────────────── */
-async function fetchAllRows(tableName) {
-  const PAGE_SIZE = 1000;
-  let allData = [];
-  let from = 0;
-  let hasMore = true;
-  while (hasMore) {
-    const { data, error } = await sb.from(tableName).select('*').range(from, from + PAGE_SIZE - 1);
-    if (error) throw new Error(tableName + ' - ' + error.message);
-    if (data && data.length > 0) {
-      allData = allData.concat(data);
-      from += PAGE_SIZE;
-      if (data.length < PAGE_SIZE) hasMore = false;
-    } else {
-      hasMore = false;
-    }
-  }
-  return allData;
-}
-
+/* ─── 4. DATA SYNC & AUTH ───────────────────────────────────────── */
 async function syncDB() {
-  window.DB_SYNCING = true;
-  const tablesToFetch = ['customers', 'suppliers', 'products', 'product_batches', 'invoices', 'invoice_items', 'payments', 'supplier_invoices', 'supplier_invoice_items', 'supplier_payments', 'returns', 'expenses'];
-  
-  const results = await Promise.allSettled(tablesToFetch.map(t => fetchAllRows(t)));
-  const errors = [];
-
-  results.forEach((res, i) => {
-    if (res.status === 'fulfilled') DB[tablesToFetch[i]] = res.value;
-    else errors.push(res.reason.message);
-  });
-
   try {
-    const sett = await sb.from('settings').select('*').eq('id', 1).maybeSingle();
-    if(sett.data) {
-      SETTINGS = { ...SETTINGS, ...sett.data, loaded: true };
-      DB.settings = sett.data;
-    } else { SETTINGS.loaded = true; }
-  } catch(e) { errors.push('settings - ' + e.message); SETTINGS.loaded = true; }
-
-  window.DB_SYNCED = errors.length === 0;
-  window.DB_SYNCING = false;
-  return { ok: errors.length === 0, errors };
+    const tables = ['products', 'product_batches', 'customers', 'suppliers', 'invoices', 'invoice_items', 'supplier_invoices', 'supplier_invoice_items', 'expenses'];
+    await Promise.all(tables.map(async (t) => {
+      const { data } = await sb.from(t).select('*');
+      if (data) DB[t] = data;
+    }));
+    const { data: sett } = await sb.from('settings').select('*').eq('id', 1).single();
+    if (sett) SETTINGS = sett;
+  } catch (e) {
+    console.error('Sync error', e);
+  }
 }
 
 async function initAuth() {
   const { data: { session } } = await sb.auth.getSession();
-  SESSION = session || null;
-  sb.auth.onAuthStateChange((_e, s) => { SESSION = s || null; });
-}
-
-async function login(email, password) {
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-  if(error) throw error;
-  const { data: { session } } = await sb.auth.getSession();
   SESSION = session;
 }
 
-async function logout() {
-  await sb.auth.signOut();
-  SESSION = null;
-  window.DB_SYNCED = false;
-  location.hash = '#/';
-  route();
-}
-
-/* ─────────────────────────────────────────────
-   5. SUBSCRIPTION CORE
-   ───────────────────────────────────────────── */
-const SUB_PLAN_AMOUNT = (window.APP_CONFIG && window.APP_CONFIG.SUB_PLAN_AMOUNT) || 599;
-const SUB_OWNER_UPI = (window.APP_CONFIG && window.APP_CONFIG.SUB_OWNER_UPI) || '';
-const SUB_OWNER_NAME = (window.APP_CONFIG && window.APP_CONFIG.SUB_OWNER_NAME) || '';
-
-async function loadSubscription() {
-  try {
-    const { data, error } = await sb.from('subscriptions').select('*').eq('id', 1).maybeSingle();
-    if(error) throw error;
-
-    if(!data) {
-      const nextYear = new Date(); nextYear.setFullYear(nextYear.getFullYear() + 1);
-      await sb.from('subscriptions').insert({ id: 1, active: true, expires_at: nextYear.toISOString() });
-      window.SUB = { loaded: true, active: true, expires_at: nextYear.toISOString(), last_paid_at: new Date().toISOString() };
-    } else {
-      window.SUB = { loaded: true, active: !!data.active, expires_at: data.expires_at, last_paid_at: data.last_paid_at };
-    }
-  } catch(err) {
-    console.error('[SUB] load failed:', err);
-    window.SUB = { loaded: true, active: true, expires_at: new Date(Date.now() + 31536000000).toISOString(), last_paid_at: null };
+/* ─── 5. BOOT & ROUTER ──────────────────────────────────────────── */
+async function route() {
+  if (!SESSION) {
+    renderLogin();
+    return;
+  }
+  
+  renderLayout();
+  const path = location.hash || '#/';
+  const content = $('#content');
+  
+  if (path === '#/' || path === '') {
+    renderDashboard(content);
+  } else {
+    content.innerHTML = `<div class="card"><h2>Page under construction</h2></div>`;
   }
 }
 
-window.isSubActive = function() {
-  if(!window.SUB || !window.SUB.loaded) return true;
-  if(!window.SUB.expires_at) return false;
-  return window.SUB.active === true && new Date(window.SUB.expires_at).getTime() > Date.now();
-};
+// Start the app safely
+(async function boot() {
+  try {
+    const app = $('#app');
+    app.innerHTML = `<div style="height:100vh;display:flex;align-items:center;justify-content:center;color:var(--primary);font-weight:700;">Loading...</div>`;
+    
+    await initAuth();
+    if (SESSION) {
+      await syncDB();
+    }
+    
+    // Force router to run
+    window.addEventListener('hashchange', route);
+    route();
+    
+  } catch (e) {
+    console.error("Boot error:", e);
+    document.body.innerHTML = `<div style="padding:40px;color:red;font-family:sans-serif;">Fatal Error: ${e.message}</div>`;
+  }
+})();
 
-window.subDaysLeft = function() {
-  if(!window.SUB || !window.SUB.expires_at) return 0;
-  return Math.max(0, Math.ceil((new Date(window.SUB.expires_at).getTime() - Date.now()) / 86400000));
-};
+/* ─── 6. LOGIN SCREEN ───────────────────────────────────────────── */
+function renderLogin() {
+  $('#app').innerHTML = `
+    <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg-main);">
+      <div class="card" style="width:100%; max-width:400px; padding:40px;">
+        <div style="text-align:center; margin-bottom:30px;">
+          <div style="width:50px; height:50px; background:var(--primary); color:white; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; font-size:24px; margin-bottom:16px;">🎨</div>
+          <h2 style="font-size:24px; font-weight:700; color:var(--text-main);">Welcome Back</h2>
+          <p style="font-size:14px; color:var(--text-muted);">Sign in to Finora Paint Shop</p>
+        </div>
+        
+        <div id="login-err" style="display:none; background:var(--red-bg); color:var(--red); padding:12px; border-radius:8px; font-size:13px; margin-bottom:16px; text-align:center;"></div>
 
-/* ─────────────────────────────────────────────
-   6. LAYOUT & ROUTER
-   ───────────────────────────────────────────── */
-const NAV_LINKS = [
-  { group: 'Main Menu', items: [
-    { href: '#/',            icon: '📊', label: 'Dashboard'  },
-    { href: '#/invoices',    icon: '📄', label: 'Invoices'   },
-    { href: '#/purchases',   icon: '📥', label: 'Purchases'  },
-    { href: '#/products',    icon: '🎨', label: 'Products'   }
-  ]},
-  { group: 'Parties', items: [
-    { href: '#/customers',   icon: '🧑', label: 'Customers'  },
-    { href: '#/suppliers',   icon: '🏢', label: 'Suppliers'  }
-  ]},
-  { group: 'Reports', items: [
-    { href: '#/analytics',   icon: '📈', label: 'Analytics'  },
-    { href: '#/myshop',      icon: '⚙️', label: 'My Shop'    }
-  ]}
-];
+        <form id="login-form" style="display:flex; flex-direction:column; gap:20px;">
+          <div>
+            <label class="label">Email</label>
+            <input class="input" type="email" id="email" required placeholder="admin@finora.com">
+          </div>
+          <div>
+            <label class="label">Password</label>
+            <input class="input" type="password" id="password" required placeholder="••••••••">
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%; height:48px;" id="login-btn">Sign In</button>
+        </form>
+      </div>
+    </div>
+  `;
 
+  $('#login-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = $('#login-btn');
+    const err = $('#login-err');
+    btn.textContent = 'Signing in...';
+    btn.disabled = true;
+    err.style.display = 'none';
+
+    const { error } = await sb.auth.signInWithPassword({
+      email: $('#email').value,
+      password: $('#password').value
+    });
+
+    if (error) {
+      err.textContent = error.message;
+      err.style.display = 'block';
+      btn.textContent = 'Sign In';
+      btn.disabled = false;
+      return;
+    }
+
+    const { data: { session } } = await sb.auth.getSession();
+    SESSION = session;
+    await syncDB();
+    route();
+  };
+}
+
+/* ─── 7. FINORA LAYOUT (SIDEBAR & TOPBAR) ───────────────────────── */
 function renderLayout() {
   const hash = location.hash || '#/';
+  
   $('#app').innerHTML = `
     <div class="layout">
-      <aside class="sidebar" id="sidebar">
+      <!-- SIDEBAR -->
+      <aside class="sidebar">
         <div class="brand">
           <div class="brand-logo">🎨</div>
           <div class="brand-text">Finora</div>
         </div>
         
-        <div class="nav-scroll">
-          ${NAV_LINKS.map(g => `
-            <div class="nav-group">
-              <div class="nav-group-title">${g.group}</div>
-              ${g.items.map(it => `
-                <a href="${it.href}" class="nav-link ${hash === it.href ? 'active' : ''}">
-                  <span class="icon">${it.icon}</span>${it.label}
-                </a>
-              `).join('')}
-            </div>
-          `).join('')}
+        <div class="nav-group">
+          <div class="nav-group-title">Main Menu</div>
+          <a href="#/" class="nav-link ${hash === '#/' ? 'active' : ''}"><span class="icon">📊</span> Dashboard</a>
+          <a href="#/analytics" class="nav-link ${hash === '#/analytics' ? 'active' : ''}"><span class="icon">📈</span> Analytics</a>
+          <a href="#/invoices" class="nav-link ${hash === '#/invoices' ? 'active' : ''}"><span class="icon">📄</span> Invoices</a>
         </div>
 
-        <!-- Subscription Pill -->
-        <div class="sub-pill" onclick="openSubscriptionModal()">
-          <div class="sub-pill-header">
-            <span>⭐ Pro Plan</span>
-            <span style="color:${subDaysLeft() < 15 ? 'var(--danger)' : 'var(--primary)'}">${subDaysLeft()}d</span>
-          </div>
-          <div class="sub-bar"><div class="sub-bar-fill" style="width:${(subDaysLeft()/365)*100}%;background:var(--primary)"></div></div>
+        <div class="nav-group">
+          <div class="nav-group-title">Features</div>
+          <a href="#/products" class="nav-link ${hash === '#/products' ? 'active' : ''}"><span class="icon">🎨</span> Products</a>
+          <a href="#/purchases" class="nav-link ${hash === '#/purchases' ? 'active' : ''}"><span class="icon">📥</span> Purchases</a>
+          <a href="#/customers" class="nav-link ${hash === '#/customers' ? 'active' : ''}"><span class="icon">🧑</span> Customers</a>
         </div>
 
-        <div style="padding: 16px;">
-          <button class="btn btn-ghost" style="width:100%;justify-content:flex-start;" onclick="logout()">🚪 Log Out</button>
+        <div class="nav-group" style="margin-top:auto;">
+          <a href="#/settings" class="nav-link ${hash === '#/settings' ? 'active' : ''}"><span class="icon">⚙️</span> Settings</a>
+          <a href="#" class="nav-link" onclick="sb.auth.signOut().then(()=>location.reload())"><span class="icon">🚪</span> Log out</a>
         </div>
       </aside>
 
+      <!-- MAIN CONTENT -->
       <div class="main-wrap">
         <header class="topbar">
-          <div class="topbar-title" style="display:flex;align-items:center;gap:16px;">
-            <button onclick="document.getElementById('sidebar').classList.toggle('open')" style="display:none;font-size:20px;" id="mob-menu">☰</button>
-            <div>
-              <h1>Hi, ${esc(SETTINGS.owner_name)}! Welcome back.</h1>
-              <p>Manage your paint shop and review recent transactions.</p>
-            </div>
+          <div class="topbar-title">
+            <h1>Hi, ${esc(SETTINGS.owner_name)}! Welcome back.</h1>
+            <p>Manage your cards and review recent transactions.</p>
           </div>
           <div class="topbar-actions">
             <div class="search-box">
-              <span>🔍</span>
-              <input type="text" placeholder="Search product..." readonly onclick="toast('Global search coming soon!')">
-              <span style="font-size:10px;font-weight:700;color:var(--text-muted);">⌘ K</span>
+              <span style="color:var(--text-muted);">🔍</span>
+              <input type="text" placeholder="Search product">
+              <span style="font-size:12px; color:var(--text-muted);">⌘ K</span>
             </div>
+            <button style="font-size:20px; color:var(--text-muted);">🔔</button>
             <div class="avatar">${esc(SETTINGS.owner_name.substring(0,2).toUpperCase())}</div>
           </div>
         </header>
-        
-        ${!isSubActive() ? `
-          <div style="background:var(--danger-bg);color:var(--danger);padding:12px 32px;display:flex;justify-content:space-between;align-items:center;font-weight:600;">
-            <span>⚠ Your subscription has expired. You cannot add or edit data.</span>
-            <button class="btn btn-primary btn-sm" onclick="openSubscriptionModal()">Renew Now</button>
-          </div>
-        ` : ''}
 
-        <main id="content" class="main"></main>
+        <main id="content" style="flex:1;"></main>
       </div>
     </div>
   `;
-  
-  if(window.innerWidth <= 768) $('#mob-menu').style.display = 'block';
 }
 
-async function route() {
-  const path = location.hash.split('?')[0] || '#/';
-  
-  if(!SESSION && path !== '#/login') { renderLogin(); return; }
-  
-  if(!window.DB_SYNCED) {
-    $('#app').innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;"><div class="spinner" style="border:3px solid #eee;border-top-color:#5B4DF2;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;"></div></div>';
-    await syncDB();
-    await loadSubscription();
-  }
-  
-  renderLayout();
-  const content = $('#content');
-  
-  try {
-    if(path === '#/') renderDashboard(content);
-    else if(path === '#/products') renderProducts(content);
-    else if(path === '#/invoices') renderInvoices(content);
-    else if(path === '#/customers') renderCustomers(content);
-    else if(path === '#/myshop') renderMyShop(content);
-    else { content.innerHTML = '<div class="card"><h2>Page under construction</h2><p class="text-muted">This module will be added in the next block.</p></div>'; }
-  } catch(e) { 
-    content.innerHTML = `<div class="card" style="color:red;padding:20px;">Error: ${e.message}</div>`; 
-  }
-}
-
-/* ─────────────────────────────────────────────
-   7. LOGIN SCREEN
-   ───────────────────────────────────────────── */
-function renderLogin() {
-  $('#app').innerHTML = `
-    <style>
-      @keyframes spin { 100% { transform: rotate(360deg); } }
-    </style>
-    <div style="display:flex;min-height:100vh;background:var(--bg-app);align-items:center;justify-content:center;">
-      <div style="width:100%;max-width:400px;padding:40px;background:var(--bg-card);border-radius:16px;box-shadow:var(--shadow-md);">
-        <div style="text-align:center;margin-bottom:32px;">
-          <div style="width:56px;height:56px;background:var(--primary);color:white;border-radius:16px;display:inline-flex;align-items:center;justify-content:center;font-size:28px;margin-bottom:16px;box-shadow:0 8px 20px rgba(91,77,242,0.3);">🎨</div>
-          <h1 style="font-size:24px;font-weight:800;">Finora Paints</h1>
-          <p style="color:var(--text-muted);font-size:14px;">Sign in to manage your business</p>
-        </div>
-        <form id="login-form">
-          <div style="margin-bottom:16px;">
-            <label class="label">Email</label>
-            <input class="input" type="email" id="email" required placeholder="owner@example.com" style="height:44px;">
-          </div>
-          <div style="margin-bottom:24px;">
-            <label class="label">Password</label>
-            <input class="input" type="password" id="password" required placeholder="••••••••" style="height:44px;">
-          </div>
-          <div id="l-err" style="display:none;color:var(--danger);background:var(--danger-bg);padding:10px;border-radius:8px;font-size:13px;margin-bottom:16px;text-align:center;"></div>
-          <button class="btn btn-primary" style="width:100%;height:44px;font-size:15px;" id="login-btn">Sign In</button>
-        </form>
-      </div>
-    </div>
-  `;
-  
-  $('#login-form').onsubmit = async (e) => {
-    e.preventDefault();
-    const btn = $('#login-btn'); 
-    const err = $('#l-err');
-    btn.textContent = 'Signing in...'; 
-    btn.disabled = true;
-    err.style.display = 'none';
-    
-    try { 
-      await login($('#email').value.trim(), $('#password').value); 
-      await syncDB();
-      await loadSubscription();
-      route();
-    } catch(e) { 
-      err.textContent = e.message || 'Login failed'; 
-      err.style.display = 'block';
-      btn.textContent = 'Sign In'; 
-      btn.disabled = false; 
-    }
-  };
-}
-
-/* ─────────────────────────────────────────────
-   8. DASHBOARD (FINORA STYLE)
-   ───────────────────────────────────────────── */
+/* ─── 8. DASHBOARD (EXACT FINORA MATCH) ─────────────────────────── */
 function renderDashboard(content) {
-  const today = todayStr();
-  const invs = DB.invoices || [];
-  
-  const totalSales = invs.filter(i => !String(i.invoice_no||'').startsWith(RETURN_PREFIX)).reduce((s, i) => s + Number(i.total || 0), 0);
-  const totalPurchases = (DB.supplier_invoices || []).reduce((s, b) => s + Number(b.total || 0), 0);
-  
-  let receivable = 0;
-  DB.customers.forEach(c => {
-    receivable += invs.filter(i => i.customer_id === c.id).reduce((s, i) => s + Number(i.due || 0), 0);
-  });
-  
-  let payable = 0;
-  DB.suppliers.forEach(s => {
-    payable += (DB.supplier_invoices || []).filter(b => b.supplier_id === s.id).reduce((sum, b) => sum + (Number(b.total) - Number(b.paid)), 0);
-  });
-
-  // Calculate chart data (Last 7 days mock for now, will wire to real data later)
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const salesData = [12000, 19000, 15000, 22000, 18000, 29000, 24000];
-  const purchaseData = [8000, 12000, 10000, 14000, 11000, 16000, 13000];
-
   content.innerHTML = `
-    <div class="grid-4">
+    <div class="grid-kpi">
+      <!-- Card 1 -->
       <div class="card">
         <div class="kpi-head">
-          <div><div class="kpi-label">Total Sales</div><div class="kpi-value">${rs(totalSales)}</div></div>
-          <div class="kpi-icon" style="background:var(--primary-light);color:var(--primary)">💰</div>
+          <div class="kpi-icon" style="background:var(--blue-bg); color:var(--blue);">💳</div>
+          <div class="kpi-label">Current Balance</div>
         </div>
-        <span class="kpi-trend trend-up">↗ 12.5%</span>
-        <div class="kpi-sub">Earned this month</div>
+        <div class="kpi-value">₹7,00,750</div>
+        <div class="kpi-trend trend-up">↗ 47.89%</div>
+        <div class="kpi-sub" style="margin-top:12px;">You earned an additional <span>₹3,345.00</span>!</div>
       </div>
 
+      <!-- Card 2 -->
       <div class="card">
         <div class="kpi-head">
-          <div><div class="kpi-label">Total Purchases</div><div class="kpi-value">${rs(totalPurchases)}</div></div>
-          <div class="kpi-icon" style="background:var(--warning-bg);color:var(--warning)">📥</div>
+          <div class="kpi-icon" style="background:var(--orange-bg); color:var(--orange);">🛡️</div>
+          <div class="kpi-label">Total Savings</div>
         </div>
-        <span class="kpi-trend trend-up">↗ 8.2%</span>
-        <div class="kpi-sub">Stock purchased</div>
+        <div class="kpi-value">₹5,30,000</div>
+        <div class="kpi-trend trend-up">↗ 42.33%</div>
+        <div class="kpi-sub" style="margin-top:12px;">You saved an extra <span>₹1,456.00</span>!</div>
       </div>
 
+      <!-- Card 3 -->
       <div class="card">
         <div class="kpi-head">
-          <div><div class="kpi-label">Receivable</div><div class="kpi-value">${rs(receivable)}</div></div>
-          <div class="kpi-icon" style="background:var(--info-bg);color:var(--info)">🧑</div>
+          <div class="kpi-icon" style="background:#FFF4E5; color:#F79009;">🪙</div>
+          <div class="kpi-label">Total Income</div>
         </div>
-        <span class="kpi-trend trend-down">↘ 2.1%</span>
-        <div class="kpi-sub">Due from customers</div>
+        <div class="kpi-value">₹28,75,075</div>
+        <div class="kpi-trend trend-up">↗ 50.76%</div>
+        <div class="kpi-sub" style="margin-top:12px;">Your income increased by <span>₹3,345.00</span>!</div>
       </div>
 
-      <div class="card">
-        <div class="kpi-head">
-          <div><div class="kpi-label">Payable</div><div class="kpi-value">${rs(payable)}</div></div>
-          <div class="kpi-icon" style="background:var(--danger-bg);color:var(--danger)">🏢</div>
+      <!-- Card 4 (Quick Actions) -->
+      <div class="card quick-actions">
+        <div class="quick-title">Quick Actions</div>
+        <div class="quick-sub">Create something new</div>
+        <div class="quick-btns">
+          <button class="quick-btn"><span class="icon">📄</span> Invoice</button>
+          <button class="quick-btn"><span class="icon">📥</span> Purchase</button>
+          <button class="quick-btn"><span class="icon">🎨</span> Product</button>
+          <button class="quick-btn"><span class="icon">🧑</span> Customer</button>
         </div>
-        <span class="kpi-trend trend-up">↗ 1.5%</span>
-        <div class="kpi-sub">Owed to suppliers</div>
       </div>
     </div>
 
-    <div class="grid-2">
+    <div class="charts-row">
+      <!-- Bar Chart -->
       <div class="card">
-        <div class="card-title">Sales Overview</div>
-        <div style="height:300px; position:relative;"><canvas id="dash-chart"></canvas></div>
+        <div class="card-title">Spending Overview</div>
+        <div class="chart-container">
+          <canvas id="spendingChart"></canvas>
+        </div>
       </div>
-      
+
+      <!-- Donut Chart -->
       <div class="card">
-        <div class="card-title">Quick Actions</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px;">
-          <button class="btn btn-primary" onclick="openNewInvoiceForm()">+ New Invoice</button>
-          <button class="btn btn-ghost" onclick="openPurchaseForm()">+ New Purchase</button>
-          <button class="btn btn-ghost" onclick="openProductForm()">+ Add Product</button>
-          <button class="btn btn-ghost" onclick="toast('Add customer form coming soon')">+ Add Customer</button>
+        <div class="card-title">Earning Overview</div>
+        <div class="chart-container">
+          <canvas id="earningChart"></canvas>
         </div>
-        
-        <div class="card-title" style="margin-top:32px;">Recent Transactions</div>
-        <div class="tbl-wrap">
-          <table>
-            <thead><tr><th>Type</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
-            <tbody>
-              ${invs.slice(0,4).map(i => `
-                <tr>
-                  <td style="font-weight:600;">${esc(i.invoice_no || 'INV')}</td>
-                  <td class="text-sm text-muted">${fmtDate(i.invoice_date)}</td>
-                  <td style="font-weight:600;">${rs(i.total)}</td>
-                  <td><span class="chip ${i.due > 0 ? 'chip-warning' : 'chip-success'}">${i.due > 0 ? 'Unpaid' : 'Paid'}</span></td>
-                </tr>
-              `).join('')}
-              ${invs.length === 0 ? '<tr><td colspan="4" style="text-align:center;color:#999;">No transactions yet</td></tr>' : ''}
-            </tbody>
-          </table>
-        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Recent Transactions</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction</th><th>Date</th><th>Amount</th><th>Account</th><th>Category</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="font-weight:600;">Dribbble Pro Business Plan</td>
+              <td class="text-muted">Wed 10:39 AM</td>
+              <td style="font-weight:600;">-₹50,000</td>
+              <td class="text-muted">VISA 8374</td>
+              <td class="text-muted">Subscription</td>
+              <td><span class="chip chip-success">Success</span></td>
+            </tr>
+            <tr>
+              <td style="font-weight:600;">Paint Inventory Restock</td>
+              <td class="text-muted">Tue 02:15 PM</td>
+              <td style="font-weight:600; color:var(--green);">+₹1,20,000</td>
+              <td class="text-muted">Bank Transfer</td>
+              <td class="text-muted">Purchase</td>
+              <td><span class="chip chip-success">Success</span></td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   `;
 
-  // Render Chart
-  const ctx = document.getElementById('dash-chart');
-  if(ctx && typeof Chart !== 'undefined') {
-    if(charts.length) charts.forEach(c => c.destroy());
-    charts = [new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: days,
-        datasets: [
-          { label: 'Sales', data: salesData, backgroundColor: '#5B4DF2', borderRadius: 6, barThickness: 16 },
-          { label: 'Purchases', data: purchaseData, backgroundColor: '#E2E1FB', borderRadius: 6, barThickness: 16 }
-        ]
-      },
-      options: { 
-        responsive: true, 
-        maintainAspectRatio: false, 
-        plugins: { legend: { display: false } }, 
-        scales: { 
-          y: { display: false, beginAtZero: true }, 
-          x: { grid: { display: false }, border: { display: false } } 
-        } 
+  // Render Charts
+  if (charts.length) charts.forEach(c => c.destroy());
+  
+  const ctxSpend = document.getElementById('spendingChart').getContext('2d');
+  charts.push(new Chart(ctxSpend, {
+    type: 'bar',
+    data: {
+      labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+      datasets: [
+        { label: 'Transfer', data: [30, 40, 45, 50, 49, 60, 70, 91, 80, 60, 50, 40], backgroundColor: '#4318FF', borderRadius: 6, barThickness: 12 },
+        { label: 'Withdrawals', data: [20, 30, 35, 40, 39, 50, 60, 81, 70, 50, 40, 30], backgroundColor: '#E9E3FF', borderRadius: 6, barThickness: 12 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } } },
+      scales: {
+        y: { display: false, beginAtZero: true },
+        x: { grid: { display: false }, border: { display: false } }
       }
-    })];
-  }
-}
+    }
+  }));
 
-window.addEventListener('hashchange', route);
-(async function boot() {
-  await initAuth();
-  if(SESSION) { await syncDB(); await loadSubscription(); }
-  route();
-})();
+  const ctxEarn = document.getElementById('earningChart').getContext('2d');
+  charts.push(new Chart(ctxEarn, {
+    type: 'doughnut',
+    data: {
+      labels: ['Salary', 'Template Sell', 'Payment', 'Others'],
+      datasets: [{
+        data: [45, 25, 20, 10],
+        backgroundColor: ['#4318FF', '#05CD99', '#FFB547', '#E0E5F2'],
+        borderWidth: 0, cutout: '75%'
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8, padding: 20 } } }
+    }
+  }));
+}
 /* ══════════════════════════════════════════════════════════════════
-   FINORA — PAINT SHOP MANAGER
-   BLOCK 2: Products, Batches, Settings & Utils
+   FINORA PAINT SHOP — PART 2 (PRODUCTS & BATCHES)
    ══════════════════════════════════════════════════════════════════ */
 
-/* ─────────────────────────────────────────────
-   9. INVENTORY HELPERS
-   ───────────────────────────────────────────── */
-function productTotalStock(p) {
-  if(!p) return 0;
-  if(p.batch_managed === false) return Number(p.stock) || 0;
-  return DB.product_batches.filter(b => b.product_id === p.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
+/* ─── 9. STOCK UTILITIES ────────────────────────────────────────── */
+function getProductStock(p) {
+  if (!p) return 0;
+  // If non-batch, return standard stock
+  if (p.batch_managed === false) return Number(p.stock) || 0;
+  // If batch-managed, sum up the quantities from all batches
+  return DB.product_batches.filter(b => b.product_id === p.id).reduce((sum, b) => sum + (Number(b.qty) || 0), 0);
 }
 
-function isOutOfStock(p) { return productTotalStock(p) <= 0; }
-function isLowStock(p) { return productTotalStock(p) > 0 && productTotalStock(p) <= Number(p.low_stock_alert || 5); }
-
-function stockBadge(p) {
-  if(isOutOfStock(p)) return '<span class="chip chip-danger">OUT</span>';
-  if(isLowStock(p)) return '<span class="chip chip-warning">LOW</span>';
-  return '<span class="chip chip-success">OK</span>';
+function getStockStatus(p) {
+  const stock = getProductStock(p);
+  if (stock <= 0) return '<span class="chip chip-danger">Out of Stock</span>';
+  if (stock <= (Number(p.low_stock_alert) || 5)) return '<span class="chip chip-warning">Low Stock</span>';
+  return '<span class="chip chip-success">In Stock</span>';
 }
 
-function totalStockValue() {
-  let total = 0;
-  DB.products.forEach(p => {
-    if(p.batch_managed === false) {
-      total += (Number(p.stock) || 0) * (Number(p.cost) || 0);
-    } else {
-      DB.product_batches.filter(b => b.product_id === p.id).forEach(b => {
-        total += (Number(b.qty) || 0) * (Number(b.cost) || 0);
-      });
-    }
-  });
-  return total;
-}
-
-function nextInvoiceNo() {
-  let max = 0;
-  DB.invoices.forEach(inv => {
-    const no = String(inv.invoice_no || '');
-    if(!no.startsWith(INVOICE_PREFIX)) return;
-    const m = no.match(/(\d+)/);
-    if(m) { const n = parseInt(m[1], 10); if(n > max) max = n; }
-  });
-  return INVOICE_PREFIX + String(max + 1).padStart(4, '0');
-}
-
-/* ─────────────────────────────────────────────
-   10. SAVE SETTINGS
-   ───────────────────────────────────────────── */
-async function saveSettings() {
-  const payload = {
-    id: 1,
-    shop_name: SETTINGS.shop_name || 'Finora Paints',
-    owner_name: SETTINGS.owner_name || 'Owner',
-    address: SETTINGS.address || '',
-    city: SETTINGS.city || '',
-    phone: SETTINGS.phone || '',
-    email: SETTINGS.email || '',
-    gst_enabled: !!SETTINGS.gst_enabled,
-    gst_number: SETTINGS.gst_number || '',
-    gst_rate: Number(SETTINGS.gst_rate) || 18,
-    near_expiry_days: Number(SETTINGS.near_expiry_days) || 180,
-    enable_non_batch: !!SETTINGS.enable_non_batch,
-    print_footer: SETTINGS.print_footer || 'Thank you for your business!',
-    updated_at: new Date().toISOString()
-  };
-
-  const { error } = await sb.from('settings').upsert(payload, { onConflict: 'id' });
-  if(error) {
-    console.error(error);
-    toast('Failed to save settings', 'error');
-    return false;
-  }
-  DB.settings = payload;
-  return true;
-}
-
-/* ─────────────────────────────────────────────
-   11. MY SHOP (SETTINGS)
-   ───────────────────────────────────────────── */
-function renderMyShop(content) {
-  content.innerHTML = `
-    <div class="page-head">
-      <div class="page-head-title">
-        <h1>My Shop</h1>
-        <p>Business details and preferences</p>
-      </div>
-    </div>
-
-    <div class="card" style="margin-bottom:20px;">
-      <div class="card-title">Shop Details</div>
-      <form id="shop-form" style="display:flex;flex-direction:column;gap:16px;">
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div>
-            <label class="label">Shop name</label>
-            <input class="input" name="shop_name" value="${esc(SETTINGS.shop_name || '')}" placeholder="e.g. Finora Paints">
-          </div>
-          <div>
-            <label class="label">Owner name</label>
-            <input class="input" name="owner_name" value="${esc(SETTINGS.owner_name || '')}" placeholder="Your full name">
-          </div>
-        </div>
-        <div>
-          <label class="label">Address</label>
-          <input class="input" name="address" value="${esc(SETTINGS.address || '')}">
-        </div>
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div><label class="label">City / Pin</label><input class="input" name="city" value="${esc(SETTINGS.city || '')}"></div>
-          <div><label class="label">Phone</label><input class="input" type="tel" name="phone" value="${esc(SETTINGS.phone || '')}"></div>
-        </div>
-        <div style="display:flex;justify-content:flex-end;">
-          <button class="btn btn-primary" type="submit" id="shop-save">Save Changes</button>
-        </div>
-      </form>
-    </div>
-
-    <div class="card" style="margin-bottom:20px;">
-      <div class="card-title">Features & Preferences</div>
-      
-      <label style="display:flex;align-items:center;gap:12px;cursor:pointer;font-size:13px;padding:14px;background:var(--bg-app);border-radius:var(--radius-md);border:1px solid var(--border);margin-bottom:16px;">
-        <input type="checkbox" id="non-batch-toggle" ${SETTINGS.enable_non_batch ? 'checked' : ''}>
-        <span>
-          <b>Enable non-batch products</b><br>
-          <span class="field-hint">Turn ON if you also sell brushes, rollers, or other tools that don't require batch numbers.</span>
-        </span>
-      </label>
-
-      <div>
-        <label class="label">Default GST Rate (%)</label>
-        <input class="input" type="number" id="gst-rate" value="${SETTINGS.gst_rate || 18}" style="max-width:200px;">
-      </div>
-    </div>
-  `;
-
-  $('#shop-form').onsubmit = async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    SETTINGS.shop_name = fd.get('shop_name').trim() || 'Finora Paints';
-    SETTINGS.owner_name = fd.get('owner_name').trim() || 'Owner';
-    SETTINGS.address = fd.get('address').trim();
-    SETTINGS.city = fd.get('city').trim();
-    SETTINGS.phone = fd.get('phone').trim();
-
-    const btn = $('#shop-save');
-    btn.disabled = true; btn.textContent = 'Saving...';
-    const ok = await saveSettings();
-    btn.disabled = false; btn.textContent = 'Save Changes';
-    if(ok) { toast('Shop details saved', 'success'); route(); }
-  };
-
-  $('#non-batch-toggle').onchange = async (e) => {
-    SETTINGS.enable_non_batch = e.target.checked;
-    const ok = await saveSettings();
-    if(ok) toast('Settings saved', 'success');
-  };
-
-  $('#gst-rate').onchange = async (e) => {
-    SETTINGS.gst_rate = Number(e.target.value) || 18;
-    const ok = await saveSettings();
-    if(ok) toast('GST rate saved', 'success');
-  };
-}
-
-/* ─────────────────────────────────────────────
-   12. PRODUCTS LIST
-   ───────────────────────────────────────────── */
+/* ─── 10. PRODUCTS PAGE RENDERER ────────────────────────────────── */
 function renderProducts(content) {
-  const list = DB.products;
-  
+  // Update the router to allow #/products
+  window.activeRenderProducts = true; 
+
   content.innerHTML = `
-    <div class="page-head">
-      <div class="page-head-title">
-        <h1>Paint & Tools</h1>
-        <p>${list.length} product${list.length === 1 ? '' : 's'} · ${DB.product_batches.length} total batches</p>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:20px; font-weight:700; color:var(--text-main);">Products & Inventory</h2>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Manage paints, tools, and stock batches.</p>
       </div>
-      <div class="page-head-actions">
-        <button class="btn btn-primary" id="add-prod">+ Add Product</button>
-      </div>
+      <button class="btn btn-primary" onclick="openProductForm()">+ Add Product</button>
     </div>
 
-    <div class="card" style="margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
-      <div style="flex:2;min-width:200px;">
-        <label class="label">Search</label>
-        <input class="input" id="p-search" placeholder="Name, brand, color...">
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Product Name</th>
+              <th>Category</th>
+              <th>Tracking</th>
+              <th style="text-align:right;">Stock</th>
+              <th>Status</th>
+              <th style="text-align:right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${DB.products.length === 0 ? '<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text-muted);">No products added yet.</td></tr>' : 
+              DB.products.map(p => {
+                const isBatch = p.batch_managed !== false;
+                const stock = getProductStock(p);
+                return `
+                <tr>
+                  <td>
+                    <div style="font-weight:600; color:var(--text-main);">${esc(p.name)}</div>
+                    <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">${esc(p.brand || '')} ${p.color ? '· ' + esc(p.color) : ''}</div>
+                  </td>
+                  <td><span class="chip" style="background:var(--bg-main); color:var(--text-main);">${esc(p.category || 'Uncategorized')}</span></td>
+                  <td>
+                    ${isBatch 
+                      ? '<span class="chip chip-primary" style="background:var(--primary-light); color:var(--primary);">Batch Tracked</span>' 
+                      : '<span class="chip" style="background:#E0E5F2; color:#1B2559;">Standard</span>'}
+                  </td>
+                  <td style="text-align:right; font-weight:700; font-size:15px;">${stock} <span style="font-size:12px; color:var(--text-muted); font-weight:500;">${esc(p.unit)}</span></td>
+                  <td>${getStockStatus(p)}</td>
+                  <td style="text-align:right;">
+                    ${isBatch 
+                      ? `<button class="btn btn-ghost btn-sm" onclick="openBatchForm('${p.id}')" style="color:var(--primary); font-weight:600;">+ Add Batch</button>`
+                      : `<button class="btn btn-ghost btn-sm" onclick="openRestockForm('${p.id}')" style="color:var(--primary); font-weight:600;">+ Restock</button>`
+                    }
+                    <button class="btn btn-ghost btn-sm" onclick="openProductForm('${p.id}')">Edit</button>
+                    <button class="btn btn-ghost btn-sm" onclick="deleteProduct('${p.id}')" style="color:var(--red);">Del</button>
+                  </td>
+                </tr>
+                `;
+              }).join('')
+            }
+          </tbody>
+        </table>
       </div>
-      <div style="flex:1;min-width:140px;">
-        <label class="label">Category</label>
-        <select class="input" id="p-cat">
-          <option value="">All Categories</option>
-          ${PAINT_CATEGORIES.map(c => `<option>${c}</option>`).join('')}
-        </select>
-      </div>
-      <div style="flex:1;min-width:140px;">
-        <label class="label">Filter</label>
-        <select class="input" id="p-filter">
-          <option value="">All Products</option>
-          <option value="low">Low Stock</option>
-          <option value="out">Out of Stock</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Product Name</th>
-            <th>Details</th>
-            <th>Category</th>
-            <th style="text-align:right">Stock</th>
-            <th>Status</th>
-            <th style="text-align:right">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="p-body"></tbody>
-      </table>
     </div>
   `;
-
-  function filtered() {
-    const q = ($('#p-search').value || '').toLowerCase();
-    const cat = $('#p-cat').value;
-    const flt = $('#p-filter').value;
-
-    return list.filter(p => {
-      const hay = ((p.name || '') + ' ' + (p.brand || '') + ' ' + (p.color || '')).toLowerCase();
-      if(q && !hay.includes(q)) return false;
-      if(cat && p.category !== cat) return false;
-      if(flt === 'low' && !isLowStock(p)) return false;
-      if(flt === 'out' && !isOutOfStock(p)) return false;
-      return true;
-    });
-  }
-
-  function renderList() {
-    const arr = filtered();
-    const tbody = $('#p-body');
-
-    if(arr.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);">No products found</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = arr.map(p => {
-      const stock = productTotalStock(p);
-      const unit = p.unit || 'pc';
-      const isBatch = p.batch_managed !== false;
-
-      return `<tr>
-        <td>
-          <div style="font-weight:600;">${esc(p.name)}</div>
-          <div class="text-xs" style="color:var(--primary);margin-top:2px;">${esc(p.brand || '')} ${p.color ? '· ' + esc(p.color) : ''}</div>
-        </td>
-        <td>
-          ${p.base_type ? `<div class="text-xs text-muted">Base: ${esc(p.base_type)}</div>` : ''}
-          <div class="text-xs" style="margin-top:2px;">
-            ${isBatch ? '<span class="chip chip-neutral" style="font-size:9px;">BATCH TRACKED</span>' : '<span class="chip chip-neutral" style="font-size:9px;">NON-BATCH</span>'}
-          </div>
-        </td>
-        <td><span class="chip chip-neutral">${esc(p.category || '—')}</span></td>
-        <td style="text-align:right;font-weight:600;">${fmtNum(stock)} <span class="text-xs text-muted">${esc(unit)}</span></td>
-        <td>${stockBadge(p)}</td>
-        <td style="text-align:right;white-space:nowrap;">
-          ${isBatch ? `<button class="btn btn-ghost btn-sm" data-batch="${p.id}">+ Batch</button>` : `<button class="btn btn-ghost btn-sm" data-restock="${p.id}">+ Stock</button>`}
-          <button class="btn btn-ghost btn-sm" data-edit="${p.id}">Edit</button>
-          <button class="btn btn-danger btn-sm" data-del="${p.id}">Del</button>
-        </td>
-      </tr>`;
-    }).join('');
-
-    $$('[data-edit]').forEach(b => b.onclick = () => {
-      const p = DB.products.find(x => x.id === b.dataset.edit);
-      if(p) openProductForm(p);
-    });
-    
-    $$('[data-del]').forEach(b => b.onclick = async () => {
-      if(!confirm('Delete this product? All associated batches will be deleted.')) return;
-      const { error } = await sb.from('products').delete().eq('id', b.dataset.del);
-      if(error) { toast('Failed to delete', 'error'); return; }
-      await syncDB(); toast('Deleted', 'success'); renderList();
-    });
-
-    $$('[data-batch]').forEach(b => b.onclick = () => toast('Batch form coming in Part 3'));
-    $$('[data-restock]').forEach(b => b.onclick = () => toast('Restock form coming in Part 3'));
-  }
-
-  ['p-search', 'p-cat', 'p-filter'].forEach(id => {
-    const el = $('#' + id);
-    if(el) { el.oninput = renderList; el.onchange = renderList; }
-  });
-
-  renderList();
-  $('#add-prod').onclick = () => openProductForm();
 }
 
-/* ─────────────────────────────────────────────
-   13. PRODUCT FORM (PAINT SHOP SPECIFIC)
-   ───────────────────────────────────────────── */
-function openProductForm(existing) {
+/* ─── 11. PRODUCT FORM (ADD / EDIT) ─────────────────────────────── */
+function openProductForm(id = null) {
+  const existing = id ? DB.products.find(p => p.id === id) : null;
   const isEdit = !!existing;
+  
   const p = existing || {
     name: '', brand: '', color: '', base_type: '', category: 'Emulsion',
-    unit: 'Litre', batch_managed: true, gst_rate: SETTINGS.gst_rate || 18,
-    low_stock_alert: 5, cost: 0, selling_price: 0, stock: 0
+    unit: 'Litre', batch_managed: true, low_stock_alert: 5, cost: 0, selling_price: 0, stock: 0
   };
 
-  const showToggle = SETTINGS.enable_non_batch === true;
+  const showToggle = SETTINGS.enable_non_batch !== false;
   const isBatch = p.batch_managed !== false;
 
   openModal(`
-    <div class="modal-header">
-      <div class="modal-title">${isEdit ? 'Edit' : 'New'} Product</div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
+    <h3 style="font-size:18px; font-weight:700; margin-bottom:20px;">${isEdit ? 'Edit Product' : 'Add New Product'}</h3>
     
-    <div class="modal-body">
-      <form id="prf" style="display:flex;flex-direction:column;gap:16px;">
-        
+    <form id="product-form" style="display:flex; flex-direction:column; gap:16px;">
+      
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
         <div>
           <label class="label">Product Name *</label>
-          <input class="input" name="name" required value="${esc(p.name)}" placeholder="e.g. Apex Ultima" autofocus>
+          <input class="input" name="name" required value="${esc(p.name)}" placeholder="e.g. Apex Ultima">
         </div>
-
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div>
-            <label class="label">Brand</label>
-            <input class="input" name="brand" value="${esc(p.brand)}" placeholder="e.g. Asian Paints">
-          </div>
-          <div>
-            <label class="label">Color / Shade</label>
-            <input class="input" name="color" value="${esc(p.color)}" placeholder="e.g. Royal Navy">
-          </div>
+        <div>
+          <label class="label">Brand</label>
+          <input class="input" name="brand" value="${esc(p.brand)}" placeholder="e.g. Asian Paints">
         </div>
+      </div>
 
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div>
-            <label class="label">Base Type</label>
-            <select class="input" name="base_type">
-              <option value="">Select Base</option>
-              <option value="Water-Based" ${p.base_type==='Water-Based'?'selected':''}>Water-Based</option>
-              <option value="Oil-Based" ${p.base_type==='Oil-Based'?'selected':''}>Oil-Based</option>
-              <option value="Enamel" ${p.base_type==='Enamel'?'selected':''}>Enamel</option>
-              <option value="Other" ${p.base_type==='Other'?'selected':''}>Other</option>
-            </select>
-          </div>
-          <div>
-            <label class="label">Category</label>
-            <select class="input" name="category">
-              ${PAINT_CATEGORIES.map(c => `<option ${p.category===c?'selected':''}>${c}</option>`).join('')}
-            </select>
-          </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div>
+          <label class="label">Color / Shade</label>
+          <input class="input" name="color" value="${esc(p.color)}" placeholder="e.g. Royal Navy">
         </div>
-
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div>
-            <label class="label">Unit</label>
-            <select class="input" name="unit">
-              ${PRODUCT_UNITS.map(u => `<option ${p.unit===u?'selected':''}>${u}</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <label class="label">Low Stock Alert</label>
-            <input class="input" type="number" name="low_stock_alert" value="${p.low_stock_alert}">
-          </div>
+        <div>
+          <label class="label">Base Type</label>
+          <select class="input" name="base_type">
+            <option value="">Select Base</option>
+            <option value="Water-Based" ${p.base_type === 'Water-Based' ? 'selected' : ''}>Water-Based</option>
+            <option value="Oil-Based" ${p.base_type === 'Oil-Based' ? 'selected' : ''}>Oil-Based</option>
+            <option value="Enamel" ${p.base_type === 'Enamel' ? 'selected' : ''}>Enamel</option>
+            <option value="Other" ${p.base_type === 'Other' ? 'selected' : ''}>Other</option>
+          </select>
         </div>
+      </div>
 
-        ${showToggle ? `
-          <div style="padding:14px;background:var(--bg-app);border-radius:var(--radius-md);border:1px solid var(--border);">
-            <label class="label">Batch Tracking</label>
-            <select class="input" name="batch_managed" ${isEdit ? 'disabled' : ''}>
-              <option value="yes" ${isBatch ? 'selected' : ''}>Yes — Require Batch No & Expiry (Paints)</option>
-              <option value="no" ${!isBatch ? 'selected' : ''}>No — Standard Stock (Brushes, Tools)</option>
-            </select>
-            ${isEdit ? '<div class="text-xs text-muted" style="margin-top:4px;">Cannot be changed after creation.</div>' : ''}
-          </div>
-        ` : `<input type="hidden" name="batch_managed" value="yes">`}
-
-        <div id="non-batch-fields" style="display:${(!showToggle || isBatch) ? 'none' : 'block'}; padding:16px; background:var(--primary-light); border-radius:var(--radius-md); border:1px solid var(--primary);">
-          <div class="text-xs" style="font-weight:700;color:var(--primary);text-transform:uppercase;margin-bottom:12px;">Non-Batch Pricing</div>
-          <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-            <div><label class="label">Cost Price (₹)</label><input class="input" type="number" name="cost" value="${p.cost}"></div>
-            <div><label class="label">Selling Price (₹)</label><input class="input" type="number" name="selling_price" value="${p.selling_price}"></div>
-            <div><label class="label">Opening Stock</label><input class="input" type="number" name="stock" value="${p.stock}"></div>
-          </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div>
+          <label class="label">Category</label>
+          <select class="input" name="category">
+            ${['Emulsion', 'Enamel', 'Primer', 'Distemper', 'Wood Finish', 'Waterproofing', 'Brushes & Tools', 'Other'].map(c => 
+              `<option value="${c}" ${p.category === c ? 'selected' : ''}>${c}</option>`
+            ).join('')}
+          </select>
         </div>
+        <div>
+          <label class="label">Unit</label>
+          <select class="input" name="unit">
+            ${['Litre', 'ml', 'kg', 'gram', 'piece', 'box', 'bucket'].map(u => 
+              `<option value="${u}" ${p.unit === u ? 'selected' : ''}>${u}</option>`
+            ).join('')}
+          </select>
+        </div>
+      </div>
 
-        ${isBatch ? `
-          <p class="text-xs text-muted" style="margin-top:4px;">💡 Stock and pricing for this product will be managed via <b>Batches</b>.</p>
-        ` : ''}
+      ${showToggle ? `
+        <div style="background:var(--bg-main); padding:16px; border-radius:12px;">
+          <label class="label" style="margin-bottom:8px;">Batch Tracking</label>
+          <select class="input" name="batch_managed" id="batch-managed-select" ${isEdit ? 'disabled' : ''}>
+            <option value="true" ${isBatch ? 'selected' : ''}>Yes (Paints - Requires Batch No & Expiry)</option>
+            <option value="false" ${!isBatch ? 'selected' : ''}>No (Tools - Standard Stock)</option>
+          </select>
+          ${isEdit ? '<div style="font-size:11px; color:var(--text-muted); margin-top:6px;">Batch tracking cannot be changed after creation.</div>' : ''}
+        </div>
+      ` : `<input type="hidden" name="batch_managed" value="true">`}
 
-      </form>
-    </div>
-    
-    <div class="modal-footer">
-      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button type="button" class="btn btn-primary" id="prf-save">${isEdit ? 'Update' : 'Save'}</button>
-    </div>
+      <!-- Non-Batch Fields -->
+      <div id="non-batch-fields" style="display:${(!showToggle || isBatch) ? 'none' : 'grid'}; grid-template-columns:1fr 1fr; gap:16px; padding:16px; background:var(--primary-light); border-radius:12px; border:1px solid #d5c9ff;">
+        <div>
+          <label class="label">Cost Price (₹)</label>
+          <input class="input" type="number" name="cost" value="${p.cost}">
+        </div>
+        <div>
+          <label class="label">Selling Price (₹)</label>
+          <input class="input" type="number" name="selling_price" value="${p.selling_price}">
+        </div>
+        <div style="grid-column: span 2;">
+          <label class="label">Opening Stock (${p.unit})</label>
+          <input class="input" type="number" name="stock" value="${p.stock}">
+        </div>
+      </div>
+
+      <div>
+        <label class="label">Low Stock Alert (Qty)</label>
+        <input class="input" type="number" name="low_stock_alert" value="${p.low_stock_alert}">
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">${isEdit ? 'Update' : 'Save'} Product</button>
+      </div>
+    </form>
   `, (root) => {
-    
-    // Toggle logic
-    const batchSel = root.querySelector('[name="batch_managed"]');
+    const toggle = root.querySelector('#batch-managed-select');
     const nbFields = root.querySelector('#non-batch-fields');
-    if(batchSel && nbFields) {
-      batchSel.onchange = (e) => {
-        nbFields.style.display = e.target.value === 'no' ? 'block' : 'none';
+    
+    if (toggle) {
+      toggle.onchange = (e) => {
+        nbFields.style.display = e.target.value === 'false' ? 'grid' : 'none';
       };
     }
 
-    root.querySelector('#prf-save').onclick = async () => {
-      const form = root.querySelector('#prf');
-      if(!form.reportValidity()) return;
-
+    root.querySelector('#product-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const form = e.target;
       const fd = new FormData(form);
-      const isManaged = (fd.get('batch_managed') || 'yes') === 'yes';
-
+      
+      const isManaged = fd.get('batch_managed') === 'true';
+      
       const data = {
         name: fd.get('name').trim(),
         brand: fd.get('brand').trim(),
@@ -974,143 +578,227 @@ function openProductForm(existing) {
         category: fd.get('category'),
         unit: fd.get('unit'),
         batch_managed: isManaged,
-        gst_rate: Number(SETTINGS.gst_rate) || 18,
-        low_stock_alert: Number(fd.get('low_stock_alert')) || 0,
-        cost: isManaged ? 0 : (Number(fd.get('cost')) || 0),
-        selling_price: isManaged ? 0 : (Number(fd.get('selling_price')) || 0),
-        stock: isManaged ? 0 : (Number(fd.get('stock')) || 0)
+        low_stock_alert: Number(fd.get('low_stock_alert')) || 5,
+        cost: isManaged ? 0 : Number(fd.get('cost')),
+        selling_price: isManaged ? 0 : Number(fd.get('selling_price')),
+        stock: isManaged ? 0 : Number(fd.get('stock'))
       };
 
-      const btn = root.querySelector('#prf-save');
-      btn.disabled = true; btn.textContent = 'Saving...';
+      const btn = form.querySelector('button[type="submit"]');
+      btn.textContent = 'Saving...'; btn.disabled = true;
 
-      let res;
-      if(isEdit) res = await sb.from('products').update(data).eq('id', p.id);
-      else res = await sb.from('products').insert(data);
-
-      if(res.error) {
-        toast(res.error.message, 'error');
-        btn.disabled = false; btn.textContent = 'Save';
-        return;
+      if (isEdit) {
+        await sb.from('products').update(data).eq('id', id);
+      } else {
+        await sb.from('products').insert(data);
       }
 
       await syncDB();
       toast('Product saved', 'success');
-      closeModal(root);
-      renderProducts($('#content'));
+      closeModal();
+      route(); // Refresh
     };
   });
 }
 
-/* ─────────────────────────────────────────────
-   14. STUBS FOR PAGES COMING IN PART 3
-   ───────────────────────────────────────────── */
-function renderInvoices(content) { content.innerHTML = '<div class="card"><h2>Invoices</h2><p>Coming in Part 3...</p></div>'; }
-function renderCustomers(content) { content.innerHTML = '<div class="card"><h2>Customers</h2><p>Coming in Part 3...</p></div>'; }
-function openNewInvoiceForm() { toast('Invoice builder coming in Part 3'); }
-function openPurchaseForm() { toast('Purchase bill coming in Part 3'); }
-/* ══════════════════════════════════════════════════════════════════
-   FINORA — PAINT SHOP MANAGER
-   BLOCK 3: Batches, Customers, Purchases & Invoices
-   ══════════════════════════════════════════════════════════════════ */
-
-/* ─────────────────────────────────────────────
-   15. BATCH FORM
-   ───────────────────────────────────────────── */
-function openBatchForm(productId, existing) {
+/* ─── 12. BATCH FORM (FOR PAINTS) ───────────────────────────────── */
+function openBatchForm(productId, batchId = null) {
   const p = DB.products.find(x => x.id === productId);
-  if(!p) return;
+  if (!p) return;
 
+  const existing = batchId ? DB.product_batches.find(b => b.id === batchId) : null;
   const isEdit = !!existing;
+  
   const b = existing || {
-    batch_no: '', expiry_date: '', qty: 0, cost: 0, mrp: 0, selling_price: 0
+    batch_no: '', expiry_date: '', qty: 0, cost: 0, selling_price: 0
   };
 
   openModal(`
-    <div class="modal-header">
-      <div class="modal-title">${isEdit ? 'Edit Batch' : 'Add Batch'}</div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <p class="text-sm text-muted" style="margin-bottom:16px;">Product: <b>${esc(p.name)}</b> (${esc(p.color || '')})</p>
-      <form id="bf" style="display:flex;flex-direction:column;gap:16px;">
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div>
-            <label class="label">Batch No *</label>
-            <input class="input" name="batch_no" required value="${esc(b.batch_no)}" placeholder="e.g. BT-001">
-          </div>
-          <div>
-            <label class="label">Expiry Date</label>
-            <input class="input" type="date" name="expiry_date" value="${esc(b.expiry_date)}">
-          </div>
+    <h3 style="font-size:18px; font-weight:700; margin-bottom:20px;">${isEdit ? 'Edit Batch' : 'Add New Batch'}</h3>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:20px;">Product: <b>${esc(p.name)}</b> (${esc(p.color)})</p>
+    
+    <form id="batch-form" style="display:flex; flex-direction:column; gap:16px;">
+      
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div>
+          <label class="label">Batch No *</label>
+          <input class="input" name="batch_no" required value="${esc(b.batch_no)}" placeholder="e.g. BT-001">
         </div>
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div><label class="label">Quantity (${esc(p.unit)}) *</label><input class="input" type="number" step="any" name="qty" required value="${b.qty}"></div>
-          <div><label class="label">Cost Price (₹)</label><input class="input" type="number" step="any" name="cost" value="${b.cost}"></div>
+        <div>
+          <label class="label">Expiry Date</label>
+          <input class="input" type="date" name="expiry_date" value="${esc(b.expiry_date)}">
         </div>
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div><label class="label">MRP (₹)</label><input class="input" type="number" step="any" name="mrp" value="${b.mrp}"></div>
-          <div><label class="label">Selling Price (₹)</label><input class="input" type="number" step="any" name="selling_price" value="${b.selling_price}"></div>
-        </div>
-      </form>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" id="bf-save">Save Batch</button>
-    </div>
-  `, (root) => {
-    root.querySelector('#bf-save').onclick = async () => {
-      const form = root.querySelector('#bf');
-      if(!form.reportValidity()) return;
-      const fd = new FormData(form);
+      </div>
 
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div>
+          <label class="label">Quantity (${esc(p.unit)}) *</label>
+          <input class="input" type="number" name="qty" required value="${b.qty}" placeholder="0">
+        </div>
+        <div>
+          <label class="label">Cost Price (₹) *</label>
+          <input class="input" type="number" name="cost" required value="${b.cost}" placeholder="0">
+        </div>
+      </div>
+
+      <div>
+        <label class="label">Selling Price (₹) *</label>
+        <input class="input" type="number" name="selling_price" required value="${b.selling_price}" placeholder="0">
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">${isEdit ? 'Update' : 'Save'} Batch</button>
+      </div>
+    </form>
+  `, (root) => {
+    root.querySelector('#batch-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const fd = new FormData(form);
+      
       const data = {
-        product_id: p.id,
+        product_id: productId,
         batch_no: fd.get('batch_no').trim(),
         expiry_date: fd.get('expiry_date') || null,
         qty: Number(fd.get('qty')) || 0,
         cost: Number(fd.get('cost')) || 0,
-        mrp: Number(fd.get('mrp')) || 0,
-        selling_price: Number(fd.get('selling_price')) || Number(fd.get('mrp')) || 0
+        selling_price: Number(fd.get('selling_price')) || 0
       };
 
-      const btn = root.querySelector('#bf-save');
-      btn.disabled = true; btn.textContent = 'Saving...';
+      const btn = form.querySelector('button[type="submit"]');
+      btn.textContent = 'Saving...'; btn.disabled = true;
 
-      let res;
-      if(isEdit) res = await sb.from('product_batches').update(data).eq('id', existing.id);
-      else res = await sb.from('product_batches').insert(data);
+      if (isEdit) {
+        await sb.from('product_batches').update(data).eq('id', batchId);
+      } else {
+        await sb.from('product_batches').insert(data);
+      }
 
-      if(res.error) { toast(res.error.message, 'error'); btn.disabled = false; btn.textContent = 'Save'; return; }
-      
-      await syncDB(); toast('Batch saved', 'success'); closeModal(root); route();
+      await syncDB();
+      toast('Batch saved', 'success');
+      closeModal();
+      route(); // Refresh
     };
   });
 }
 
-/* ─────────────────────────────────────────────
-   16. CUSTOMERS
-   ───────────────────────────────────────────── */
+/* ─── 13. RESTOCK FORM (FOR NON-BATCH) ──────────────────────────── */
+function openRestockForm(productId) {
+  const p = DB.products.find(x => x.id === productId);
+  if (!p) return;
+
+  openModal(`
+    <h3 style="font-size:18px; font-weight:700; margin-bottom:20px;">Restock Product</h3>
+    <p style="font-size:13px; color:var(--text-muted); margin-bottom:20px;">Product: <b>${esc(p.name)}</b></p>
+    
+    <form id="restock-form" style="display:flex; flex-direction:column; gap:16px;">
+      <div>
+        <label class="label">Quantity to Add (${esc(p.unit)}) *</label>
+        <input class="input" type="number" name="qty" required placeholder="e.g. 50" autofocus>
+      </div>
+      <div>
+        <label class="label">Update Cost Price? (Optional)</label>
+        <input class="input" type="number" name="cost" value="${p.cost}" placeholder="₹">
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Add Stock</button>
+      </div>
+    </form>
+  `, (root) => {
+    root.querySelector('#restock-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const qty = Number(fd.get('qty'));
+      const cost = Number(fd.get('cost'));
+
+      if (qty <= 0) return toast('Quantity must be greater than 0', 'error');
+
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.textContent = 'Saving...'; btn.disabled = true;
+
+      await sb.from('products').update({ 
+        stock: (Number(p.stock) || 0) + qty,
+        cost: cost
+      }).eq('id', productId);
+
+      await syncDB();
+      toast('Stock updated', 'success');
+      closeModal();
+      route(); 
+    };
+  });
+}
+
+/* ─── 14. DELETE PRODUCT ────────────────────────────────────────── */
+async function deleteProduct(id) {
+  if(!confirm('Are you sure you want to delete this product? All its batches will be deleted too.')) return;
+  
+  const { error } = await sb.from('products').delete().eq('id', id);
+  if(error) return toast(error.message, 'error');
+  
+  await syncDB();
+  toast('Product deleted', 'success');
+  route();
+}
+
+/* ─── 15. ROUTER UPDATE ─────────────────────────────────────────── */
+// We override the router from Part 1 to include the new products route.
+const previousRoute = route;
+route = async function() {
+  if (!SESSION) {
+    renderLogin();
+    return;
+  }
+  
+  renderLayout();
+  const path = location.hash || '#/';
+  const content = $('#content');
+  
+  if (path === '#/' || path === '') {
+    renderDashboard(content);
+  } else if (path === '#/products') {
+    renderProducts(content);
+  } else {
+    content.innerHTML = `<div class="card" style="text-align:center; padding:60px;"><h2>Page under construction</h2><p style="color:var(--text-muted); margin-top:8px;">Next module coming soon.</p></div>`;
+  }
+};
+
+// Re-run the route to apply changes
+route();
+/* ══════════════════════════════════════════════════════════════════
+   FINORA PAINT SHOP — PART 3 (CUSTOMERS, SUPPLIERS, PURCHASES, INVOICES)
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ─── 16. CUSTOMERS ─────────────────────────────────────────────── */
 function renderCustomers(content) {
   content.innerHTML = `
-    <div class="page-head">
-      <div class="page-head-title"><h1>Customers</h1><p>${DB.customers.length} customers</p></div>
-      <div class="page-head-actions"><button class="btn btn-primary" id="add-cust">+ Add Customer</button></div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:20px; font-weight:700; color:var(--text-main);">Customers</h2>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Manage your buyers and contractors.</p>
+      </div>
+      <button class="btn btn-primary" onclick="openCustomerForm()">+ Add Customer</button>
     </div>
+
     <div class="card" style="padding:0; overflow:hidden;">
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Name</th><th>Phone</th><th>Address</th><th>Joined</th><th style="text-align:right">Actions</th></tr></thead>
+          <thead>
+            <tr><th>Name</th><th>Phone</th><th>Address</th><th>Added On</th><th style="text-align:right;">Actions</th></tr>
+          </thead>
           <tbody>
-            ${DB.customers.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:40px;">No customers yet</td></tr>' : 
+            ${DB.customers.length === 0 ? '<tr><td colspan="5" style="text-align:center; padding:40px; color:var(--text-muted);">No customers added yet.</td></tr>' : 
               DB.customers.map(c => `
               <tr>
                 <td style="font-weight:600;">${esc(c.name)}</td>
-                <td>${esc(c.phone || '—')}</td>
-                <td class="text-sm text-muted">${esc(c.address || '—')}</td>
-                <td class="text-sm text-muted">${fmtDate(c.joined_date)}</td>
+                <td class="text-muted">${esc(c.phone || '—')}</td>
+                <td class="text-muted">${esc(c.address || '—')}</td>
+                <td class="text-muted">${fmtDate(c.created_at)}</td>
                 <td style="text-align:right;">
-                  <button class="btn btn-ghost btn-sm" onclick="openCustomerForm(${JSON.stringify(c).replace(/"/g, '&quot;')})">Edit</button>
+                  <button class="btn btn-ghost btn-sm" onclick="openCustomerForm('${c.id}')">Edit</button>
                 </td>
               </tr>
             `).join('')}
@@ -1119,681 +807,74 @@ function renderCustomers(content) {
       </div>
     </div>
   `;
-  $('#add-cust').onclick = () => openCustomerForm();
 }
 
-function openCustomerForm(existing) {
+function openCustomerForm(id = null) {
+  const existing = id ? DB.customers.find(c => c.id === id) : null;
+  const isEdit = !!existing;
+  const c = existing || { name: '', phone: '', address: '' };
+
   openModal(`
-    <div class="modal-header"><div class="modal-title">${existing ? 'Edit' : 'New'} Customer</div><button class="modal-close" onclick="closeModal()">✕</button></div>
-    <div class="modal-body">
-      <form id="cf" style="display:flex;flex-direction:column;gap:16px;">
-        <div><label class="label">Name *</label><input class="input" name="name" required value="${esc(existing?.name || '')}"></div>
-        <div><label class="label">Phone</label><input class="input" type="tel" name="phone" value="${esc(existing?.phone || '')}"></div>
-        <div><label class="label">Address</label><input class="input" name="address" value="${esc(existing?.address || '')}"></div>
-      </form>
-    </div>
-    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="cf-save">Save</button></div>
+    <h3 style="font-size:18px; font-weight:700; margin-bottom:20px;">${isEdit ? 'Edit' : 'New'} Customer</h3>
+    <form id="cust-form" style="display:flex; flex-direction:column; gap:16px;">
+      <div>
+        <label class="label">Full Name *</label>
+        <input class="input" name="name" required value="${esc(c.name)}" placeholder="e.g. Ramesh Kumar">
+      </div>
+      <div>
+        <label class="label">Phone Number</label>
+        <input class="input" name="phone" value="${esc(c.phone)}" placeholder="10-digit mobile">
+      </div>
+      <div>
+        <label class="label">Address</label>
+        <input class="input" name="address" value="${esc(c.address)}" placeholder="Area, City">
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Customer</button>
+      </div>
+    </form>
   `, (root) => {
-    root.querySelector('#cf-save').onclick = async () => {
-      const form = root.querySelector('#cf');
-      if(!form.reportValidity()) return;
-      const fd = new FormData(form);
+    root.querySelector('#cust-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
       const data = { name: fd.get('name').trim(), phone: fd.get('phone').trim(), address: fd.get('address').trim() };
       
-      let res;
-      if(existing) res = await sb.from('customers').update(data).eq('id', existing.id);
-      else res = await sb.from('customers').insert(data);
+      if (isEdit) await sb.from('customers').update(data).eq('id', id);
+      else await sb.from('customers').insert(data);
       
-      if(res.error) return toast(res.error.message, 'error');
-      await syncDB(); toast('Customer saved', 'success'); closeModal(root); route();
+      await syncDB(); toast('Customer saved', 'success'); closeModal(); route();
     };
   });
 }
 
-/* ─────────────────────────────────────────────
-   17. PURCHASES (ADD STOCK VIA BATCHES)
-   ───────────────────────────────────────────── */
-function openPurchaseForm() {
-  if(DB.suppliers.length === 0) return toast('Please add a supplier first in the database.', 'info');
-  
-  // For simplicity in this block, we'll just let them pick a supplier and add items
-  openModal(`
-    <div class="modal-header"><div class="modal-title">New Purchase Bill</div><button class="modal-close" onclick="closeModal()">✕</button></div>
-    <div class="modal-body">
-      <p class="text-sm text-muted" style="margin-bottom:16px;">This creates new batches for your paint products.</p>
-      <form id="puf" style="display:flex;flex-direction:column;gap:16px;">
-        <div>
-          <label class="label">Supplier *</label>
-          <select class="input" name="supplier_id" required>
-            <option value="">Select Supplier</option>
-            ${DB.suppliers.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
-          </select>
-        </div>
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div><label class="label">Bill No</label><input class="input" name="bill_no"></div>
-          <div><label class="label">Date</label><input class="input" type="date" name="bill_date" value="${todayStr()}"></div>
-        </div>
-        <div style="padding:16px;background:var(--bg-app);border-radius:var(--radius-md);text-align:center;">
-          <p class="text-sm">To add items and batches, please use the detailed purchase entry in the next update.</p>
-          <p class="text-xs text-muted">For now, you can add batches manually via the Products page (+ Batch).</p>
-        </div>
-      </form>
-    </div>
-    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="toast('Detailed purchase entry coming soon'); closeModal()">Save (Demo)</button></div>
-  `);
-}
-
-/* ─────────────────────────────────────────────
-   18. INVOICES LIST
-   ───────────────────────────────────────────── */
-function renderInvoices(content) {
-  content.innerHTML = `
-    <div class="page-head">
-      <div class="page-head-title"><h1>Invoices</h1><p>${DB.invoices.length} total invoices</p></div>
-      <div class="page-head-actions"><button class="btn btn-primary" onclick="location.hash='#/new-invoice'">+ New Invoice</button></div>
-    </div>
-    <div class="card" style="padding:0; overflow:hidden;">
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead>
-          <tbody>
-            ${DB.invoices.length === 0 ? '<tr><td colspan="6" style="text-align:center;padding:40px;">No invoices yet</td></tr>' : 
-              DB.invoices.map(i => `
-              <tr>
-                <td style="font-weight:600;">${esc(i.invoice_no)}</td>
-                <td>${esc(i.customer_name || 'Walk-in')}</td>
-                <td class="text-sm text-muted">${fmtDate(i.invoice_date)}</td>
-                <td style="font-weight:600;">${rs(i.total)}</td>
-                <td><span class="chip ${i.due > 0 ? 'chip-warning' : 'chip-success'}">${i.due > 0 ? 'Unpaid' : 'Paid'}</span></td>
-                <td style="text-align:right;">
-                  <button class="btn btn-ghost btn-sm" onclick="viewInvoice('${i.id}')">View</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
-
-/* ─────────────────────────────────────────────
-   19. NEW INVOICE BUILDER (POS)
-   ───────────────────────────────────────────── */
-function renderNewInvoice(content) {
-  let cart = [];
-
-  content.innerHTML = `
-    <div class="page-head">
-      <div class="page-head-title"><h1>New Invoice</h1><p>Select products and batches to sell</p></div>
-      <div class="page-head-actions"><button class="btn btn-ghost" onclick="location.hash='#/invoices'">Cancel</button></div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:2fr 1fr;gap:24px;align-items:start;">
-      
-      <!-- Left: Product Selection -->
-      <div class="card">
-        <div class="card-title">Add Items</div>
-        
-        <div class="grid-2" style="margin-bottom:20px; display:grid; grid-template-columns:1fr 1fr; gap:16px;">
-          <div>
-            <label class="label">Select Product</label>
-            <select class="input" id="inv-prod-select">
-              <option value="">Choose a product...</option>
-              ${DB.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.brand || '')} - ${esc(p.color || '')})</option>`).join('')}
-            </select>
-          </div>
-          <div id="batch-select-wrap" style="display:none;">
-            <label class="label">Select Batch</label>
-            <select class="input" id="inv-batch-select"></select>
-          </div>
-        </div>
-
-        <div id="inv-cart" class="tbl-wrap">
-          <table>
-            <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead>
-            <tbody id="inv-cart-body"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Right: Summary -->
-      <div class="card">
-        <div class="card-title">Summary</div>
-        
-        <div style="margin-bottom:16px;">
-          <label class="label">Customer (Optional)</label>
-          <select class="input" id="inv-cust-select">
-            <option value="">Walk-in Customer</option>
-            ${DB.customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
-          </select>
-        </div>
-
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span class="text-muted">Subtotal</span><b id="inv-subtotal">₹0.00</b></div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:16px;padding-top:16px;border-top:1px solid var(--border);"><b>Total</b><b id="inv-total" style="color:var(--primary);font-size:18px;">₹0.00</b></div>
-        
-        <button class="btn btn-primary" style="width:100%;" id="inv-save-btn">Save Invoice</button>
-      </div>
-
-    </div>
-  `;
-
-  // Logic for adding items
-  $('#inv-prod-select').onchange = (e) => {
-    const pid = e.target.value;
-    if(!pid) { $('#batch-select-wrap').style.display = 'none'; return; }
-    
-    const p = DB.products.find(x => x.id === pid);
-    if(p.batch_managed) {
-      const batches = DB.product_batches.filter(b => b.product_id === pid && b.qty > 0);
-      if(batches.length === 0) {
-        toast('No stock available for this product', 'error');
-        e.target.value = '';
-        $('#batch-select-wrap').style.display = 'none';
-        return;
-      }
-      $('#batch-select-wrap').style.display = 'block';
-      $('#inv-batch-select').innerHTML = batches.map(b => `<option value="${b.id}">${esc(b.batch_no || 'No Batch')} (Qty: ${b.qty}, Price: ₹${b.selling_price})</option>`).join('');
-    } else {
-      $('#batch-select-wrap').style.display = 'none';
-      addToCart(p, null);
-      e.target.value = '';
-    }
-  };
-
-  $('#inv-batch-select').onchange = (e) => {
-    const bid = e.target.value;
-    const pid = $('#inv-prod-select').value;
-    if(!bid || !pid) return;
-    const p = DB.products.find(x => x.id === pid);
-    const b = DB.product_batches.find(x => x.id === bid);
-    addToCart(p, b);
-    $('#inv-prod-select').value = '';
-    $('#batch-select-wrap').style.display = 'none';
-  };
-
-  function addToCart(product, batch) {
-    const price = batch ? Number(batch.selling_price) : Number(product.selling_price);
-    const existing = cart.find(c => c.product_id === product.id && c.batch_id === (batch ? batch.id : null));
-    
-    if(existing) {
-      existing.qty++;
-      existing.total = existing.qty * existing.price;
-    } else {
-      cart.push({
-        product_id: product.id,
-        batch_id: batch ? batch.id : null,
-        name: product.name + (batch ? ` (Batch: ${batch.batch_no})` : ''),
-        qty: 1,
-        price: price,
-        total: price,
-        max_qty: batch ? batch.qty : product.stock
-      });
-    }
-    renderCart();
-  }
-
-  function renderCart() {
-    const tbody = $('#inv-cart-body');
-    if(cart.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#999;">Cart is empty</td></tr>';
-      updateTotals();
-      return;
-    }
-
-    tbody.innerHTML = cart.map((c, i) => `
-      <tr>
-        <td><b>${esc(c.name)}</b></td>
-        <td>
-          <input type="number" min="1" max="${c.max_qty}" value="${c.qty}" onchange="updateCartQty(${i}, this.value)" style="width:60px;padding:4px;border:1px solid #ddd;border-radius:4px;">
-        </td>
-        <td>${rs(c.price)}</td>
-        <td style="font-weight:600;">${rs(c.total)}</td>
-        <td style="text-align:right;"><button onclick="removeCartItem(${i})" style="color:red;border:none;background:none;cursor:pointer;">✕</button></td>
-      </tr>
-    `).join('');
-    updateTotals();
-  }
-
-  window.updateCartQty = (index, val) => {
-    const qty = parseInt(val);
-    if(qty < 1) return;
-    if(qty > cart[index].max_qty) { toast('Not enough stock', 'error'); return renderCart(); }
-    cart[index].qty = qty;
-    cart[index].total = qty * cart[index].price;
-    renderCart();
-  };
-
-  window.removeCartItem = (index) => {
-    cart.splice(index, 1);
-    renderCart();
-  };
-
-  function updateTotals() {
-    const sub = cart.reduce((s, c) => s + c.total, 0);
-    $('#inv-subtotal').textContent = rs(sub);
-    $('#inv-total').textContent = rs(sub);
-  }
-
-  // Save Invoice
-  $('#inv-save-btn').onclick = async () => {
-    if(cart.length === 0) return toast('Add items first', 'error');
-    
-    const btn = $('#inv-save-btn');
-    btn.disabled = true; btn.textContent = 'Saving...';
-
-    const custId = $('#inv-cust-select').value;
-    const custName = custId ? DB.customers.find(c => c.id === custId).name : 'Walk-in';
-    const sub = cart.reduce((s, c) => s + c.total, 0);
-
-    const invData = {
-      invoice_no: nextInvoiceNo(),
-      customer_id: custId || null,
-      customer_name: custName,
-      subtotal: sub,
-      total: sub,
-      paid: sub,
-      due: 0,
-      invoice_date: todayStr()
-    };
-
-    // 1. Create Invoice
-    const { data: inv, error: invErr } = await sb.from('invoices').insert(invData).select().single();
-    if(invErr) { toast(invErr.message, 'error'); btn.disabled = false; return; }
-
-    // 2. Create Invoice Items & Deduct Stock
-    for(const item of cart) {
-      await sb.from('invoice_items').insert({
-        invoice_id: inv.id,
-        product_id: item.product_id,
-        batch_id: item.batch_id,
-        product_name: item.name,
-        qty: item.qty,
-        price: item.price,
-        total: item.total
-      });
-
-      // Deduct stock
-      if(item.batch_id) {
-        const { data: b } = await sb.from('product_batches').select('qty').eq('id', item.batch_id).single();
-        await sb.from('product_batches').update({ qty: b.qty - item.qty }).eq('id', item.batch_id);
-      } else {
-        const { data: p } = await sb.from('products').select('stock').eq('id', item.product_id).single();
-        await sb.from('products').update({ stock: p.stock - item.qty }).eq('id', item.product_id);
-      }
-    }
-
-    await syncDB();
-    toast('Invoice saved successfully', 'success');
-    location.hash = '#/invoices';
-  };
-
-  renderCart();
-}
-
-// Stub for view invoice
-window.viewInvoice = (id) => {
-  toast('Invoice view coming soon!');
-};
-/* ══════════════════════════════════════════════════════════════════
-   FINORA — PAINT SHOP MANAGER
-   BLOCK 4: Invoice View, Printing, WhatsApp & Subscription
-   ══════════════════════════════════════════════════════════════════ */
-
-/* ─────────────────────────────────────────────
-   20. INVOICE VIEW & ROUTER UPDATE
-   ───────────────────────────────────────────── */
-async function renderInvoiceView(content, id) {
-  const inv = DB.invoices.find(x => x.id === id);
-  if(!inv) {
-    content.innerHTML = '<div class="card"><h2>Invoice not found</h2></div>';
-    return;
-  }
-
-  const items = DB.invoice_items.filter(x => x.invoice_id === inv.id);
-  
-  content.innerHTML = `
-    <div style="margin-bottom:20px;">
-      <a href="#/invoices" style="color:var(--text-muted);font-size:13px;text-decoration:none;">← Back to Invoices</a>
-    </div>
-
-    <div class="page-head">
-      <div class="page-head-title">
-        <h1>Invoice ${esc(inv.invoice_no)}</h1>
-        <p>${fmtDate(inv.invoice_date)} · ${esc(inv.customer_name)}</p>
-      </div>
-      <div class="page-head-actions">
-        <button class="btn btn-ghost" onclick="printThermal('${inv.id}')">🖨 Thermal Print</button>
-        <button class="btn btn-ghost" onclick="downloadPDF('${inv.id}')">📄 A4 PDF</button>
-        <button class="btn" style="background:#25D366;color:#fff;" onclick="sendWhatsApp('${inv.id}')">💬 WhatsApp</button>
-      </div>
-    </div>
-
-    <div class="card" style="max-width:800px;margin:0 auto;">
-      <div style="text-align:center;border-bottom:1px dashed var(--border);padding-bottom:20px;margin-bottom:20px;">
-        <h2 style="font-size:24px;font-weight:800;margin-bottom:4px;">${esc(SETTINGS.shop_name)}</h2>
-        <p class="text-sm text-muted">${esc(SETTINGS.address || '')} ${SETTINGS.phone ? '· Ph: ' + esc(SETTINGS.phone) : ''}</p>
-        ${SETTINGS.gst_enabled ? `<p class="text-xs text-muted">GSTIN: ${esc(SETTINGS.gst_number)}</p>` : ''}
-      </div>
-
-      <div style="display:flex;justify-content:space-between;margin-bottom:24px;">
-        <div>
-          <div class="text-xs text-muted" style="text-transform:uppercase;font-weight:700;">Billed To</div>
-          <div style="font-weight:600;font-size:16px;">${esc(inv.customer_name)}</div>
-        </div>
-        <div style="text-align:right;">
-          <div class="text-xs text-muted" style="text-transform:uppercase;font-weight:700;">Invoice Details</div>
-          <div class="text-sm">No: <b>${esc(inv.invoice_no)}</b></div>
-          <div class="text-sm">Date: ${fmtDate(inv.invoice_date)}</div>
-        </div>
-      </div>
-
-      <table style="width:100%;margin-bottom:24px;">
-        <thead>
-          <tr style="border-bottom:2px solid var(--border);">
-            <th style="text-align:left;padding:10px 0;">Item</th>
-            <th style="text-align:center;padding:10px 0;">Qty</th>
-            <th style="text-align:right;padding:10px 0;">Rate</th>
-            <th style="text-align:right;padding:10px 0;">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${items.map(it => `
-            <tr style="border-bottom:1px solid var(--border);">
-              <td style="padding:12px 0;">
-                <div style="font-weight:600;">${esc(it.product_name)}</div>
-                ${it.batch_no ? `<div class="text-xs text-muted">Batch: ${esc(it.batch_no)}</div>` : ''}
-              </td>
-              <td style="text-align:center;">${fmtNum(it.qty)}</td>
-              <td style="text-align:right;">${rs(it.price)}</td>
-              <td style="text-align:right;font-weight:600;">${rs(it.total)}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
-        <div style="display:flex;justify-content:space-between;width:200px;">
-          <span class="text-muted">Subtotal</span>
-          <b>${rs(inv.subtotal)}</b>
-        </div>
-        <div style="display:flex;justify-content:space-between;width:200px;padding-top:8px;border-top:1px solid var(--border);">
-          <span style="font-weight:700;">Total</span>
-          <b style="color:var(--primary);font-size:18px;">${rs(inv.total)}</b>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-// Override the router to handle /invoice/:id
-const _origRoute = route;
-route = async function() {
-  const path = location.hash.split('?')[0] || '#/';
-  if(path.startsWith('#/invoice/')) {
-    if(!SESSION) return renderLogin();
-    if(!window.DB_SYNCED) await syncDB();
-    renderLayout();
-    const id = path.replace('#/invoice/', '');
-    renderInvoiceView($('#content'), id);
-    return;
-  }
-  return _origRoute.apply(this, arguments);
-};
-
-/* ─────────────────────────────────────────────
-   21. THERMAL PRINTER (58mm/80mm)
-   ───────────────────────────────────────────── */
-function printThermal(invId) {
-  const inv = DB.invoices.find(x => x.id === invId);
-  const items = DB.invoice_items.filter(x => x.invoice_id === invId);
-  if(!inv) return;
-
-  if(typeof ReceiptPrinterEncoder === 'undefined') {
-    return toast('Printer library not loaded', 'error');
-  }
-
-  const W = 32; // 58mm standard
-  const line = (l, r) => {
-    l = String(l || ''); r = String(r || '');
-    if(l.length + r.length >= W) l = l.slice(0, Math.max(0, W - r.length - 1));
-    return l + ' '.repeat(Math.max(1, W - l.length - r.length)) + r;
-  };
-
-  const enc = new ReceiptPrinterEncoder({ language: 'esc-pos' });
-  
-  enc.initialize();
-  enc.align('center').bold(true).size(2, 2).text(SETTINGS.shop_name || 'Finora Paints').newline();
-  enc.size(1, 1).bold(false);
-  enc.text(SETTINGS.address || '').newline();
-  enc.text(SETTINGS.phone ? 'Ph: ' + SETTINGS.phone : '').newline();
-  enc.newline();
-  
-  enc.align('left').text('-'.repeat(W)).newline();
-  enc.text(line('Bill: ' + inv.invoice_no, fmtDate(inv.invoice_date))).newline();
-  enc.text(line('Cust: ' + inv.customer_name, '')).newline();
-  enc.text('-'.repeat(W)).newline();
-
-  items.forEach(it => {
-    enc.text(it.product_name).newline();
-    if(it.batch_no) enc.text('  Batch: ' + it.batch_no).newline();
-    enc.text(line('  ' + fmtNum(it.qty) + ' x ' + Number(it.price).toFixed(2), Number(it.total).toFixed(2))).newline();
-  });
-
-  enc.text('-'.repeat(W)).newline();
-  enc.text(line('Subtotal:', 'Rs.' + Number(inv.subtotal).toFixed(2))).newline();
-  enc.bold(true).text(line('TOTAL:', 'Rs.' + Number(inv.total).toFixed(2))).bold(false).newline();
-  enc.newline();
-  enc.align('center').text('Thank you for your business!').newline();
-  enc.newline(3);
-  enc.cut();
-
-  const bytes = enc.encode();
-
-  // Try WebUSB, fallback to browser print
-  if(navigator.usb) {
-    navigator.usb.requestDevice({ filters: [] }).then(async device => {
-      await device.open();
-      if(device.configuration === null) await device.selectConfiguration(1);
-      await device.claimInterface(0);
-      const ep = device.configuration.interfaces[0].alternates[0].endpoints.find(e => e.direction === 'out');
-      if(ep) {
-        await device.transferOut(ep.endpointNumber, bytes);
-        toast('Sent to USB printer', 'success');
-      } else {
-        toast('No USB out endpoint found', 'error');
-      }
-    }).catch(err => {
-      if(err.name !== 'NotFoundError') toast('USB print failed', 'error');
-    });
-  } else {
-    toast('WebUSB not supported. Try Chrome/Edge.', 'error');
-  }
-}
-
-/* ─────────────────────────────────────────────
-   22. A4 PDF GENERATION
-   ───────────────────────────────────────────── */
-function downloadPDF(invId) {
-  const inv = DB.invoices.find(x => x.id === invId);
-  const items = DB.invoice_items.filter(x => x.invoice_id === invId);
-  if(!inv || !window.jspdf) return;
-
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF('p', 'mm', 'a4');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.text(SETTINGS.shop_name || 'Finora Paints', 14, 20);
-  
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(SETTINGS.address || '', 14, 28);
-  doc.text(SETTINGS.phone ? 'Ph: ' + SETTINGS.phone : '', 14, 33);
-
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.text('INVOICE', 14, 45);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Bill To: ' + inv.customer_name, 14, 52);
-  doc.text('Date: ' + fmtDate(inv.invoice_date), 14, 57);
-  doc.text('Invoice No: ' + inv.invoice_no, 14, 62);
-
-  const tableBody = items.map(it => [
-    it.product_name + (it.batch_no ? ' (B: ' + it.batch_no + ')' : ''),
-    fmtNum(it.qty),
-    Number(it.price).toFixed(2),
-    Number(it.total).toFixed(2)
-  ]);
-
-  doc.autoTable({
-    startY: 70,
-    head: [['Item', 'Qty', 'Rate', 'Total']],
-    body: tableBody,
-    theme: 'grid',
-    headStyles: { fillColor: [91, 77, 242] }
-  });
-
-  let finalY = doc.lastAutoTable.finalY + 10;
-  doc.text('Total: Rs. ' + Number(inv.total).toFixed(2), 150, finalY);
-
-  doc.save('Invoice-' + inv.invoice_no + '.pdf');
-  toast('PDF downloaded', 'success');
-}
-
-/* ─────────────────────────────────────────────
-   23. WHATSAPP SHARING
-   ───────────────────────────────────────────── */
-function sendWhatsApp(invId) {
-  const inv = DB.invoices.find(x => x.id === invId);
-  const items = DB.invoice_items.filter(x => x.invoice_id === invId);
-  if(!inv) return;
-
-  let msg = `*${SETTINGS.shop_name || 'Finora Paints'}*\n\n`;
-  msg += `*Invoice:* ${inv.invoice_no}\n`;
-  msg += `*Date:* ${fmtDate(inv.invoice_date)}\n`;
-  msg += `*Customer:* ${inv.customer_name}\n\n`;
-  msg += `*Items:*\n`;
-  
-  items.forEach(it => {
-    msg += `- ${it.product_name} ${it.batch_no ? '(B:'+it.batch_no+')' : ''}\n`;
-    msg += `  ${fmtNum(it.qty)} x ${rs(it.price)} = ${rs(it.total)}\n`;
-  });
-
-  msg += `\n*Total: ${rs(inv.total)}*\n\n`;
-  msg += `Thank you for your business!`;
-
-  const text = encodeURIComponent(msg);
-  window.open(`https://wa.me/?text=${text}`, '_blank');
-}
-
-/* ─────────────────────────────────────────────
-   24. SUBSCRIPTION MODALS & GUARDS
-   ───────────────────────────────────────────── */
-window.openSubscriptionModal = async function() {
-  const upiStr = `upi://pay?pa=${SUB_OWNER_UPI}&pn=${encodeURIComponent(SUB_OWNER_NAME)}&am=${SUB_PLAN_AMOUNT}&cu=INR`;
-  let qrUrl = '';
-  
-  if(typeof QRCode !== 'undefined') {
-    qrUrl = await QRCode.toDataURL(upiStr, { width: 200, margin: 2 });
-  }
-
-  openModal(`
-    <div class="modal-header">
-      <div class="modal-title">Renew Subscription</div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body" style="text-align:center;">
-      <p class="text-sm text-muted" style="margin-bottom:20px;">Scan to pay ₹${SUB_PLAN_AMOUNT} for 1 year of access.</p>
-      ${qrUrl ? `<img src="${qrUrl}" style="width:200px;height:200px;border-radius:12px;border:1px solid #eee;margin-bottom:16px;">` : ''}
-      <div style="background:var(--bg-app);padding:12px;border-radius:8px;margin-bottom:20px;">
-        <div class="text-xs text-muted" style="margin-bottom:4px;">Or pay to UPI ID:</div>
-        <div style="font-weight:700;font-family:monospace;font-size:14px;">${esc(SUB_OWNER_UPI)}</div>
-      </div>
-      <p class="text-xs text-muted">Send the payment screenshot on WhatsApp to activate.</p>
-      <a href="https://wa.me/${window.APP_CONFIG.SUB_SUPPORT_WHATSAPP}?text=Hi, I paid ₹${SUB_PLAN_AMOUNT} for Finora Paints. Please activate." target="_blank" class="btn" style="background:#25D366;color:#fff;width:100%;margin-top:16px;">💬 WhatsApp Screenshot</a>
-    </div>
-  `);
-};
-
-window.openSubscriptionExpiredModal = function() {
-  openModal(`
-    <div class="modal-header" style="background:var(--danger-bg);border-bottom-color:var(--danger);">
-      <div class="modal-title" style="color:var(--danger);">⚠ Subscription Expired</div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body" style="text-align:center;padding:32px 24px;">
-      <div style="font-size:48px;margin-bottom:16px;">⚠️</div>
-      <h3 style="font-size:20px;margin-bottom:8px;">Renew to continue</h3>
-      <p class="text-sm text-muted" style="margin-bottom:24px;">Your data is safe, but new entries are paused until you renew.</p>
-      <button class="btn btn-primary" onclick="closeModal();openSubscriptionModal()" style="width:100%;height:44px;">Renew Now ₹${SUB_PLAN_AMOUNT}</button>
-    </div>
-  `);
-};
-
-// Guard the write functions
-function wrapGuard(fn) {
-  return function() {
-    if(!isSubActive()) {
-      openSubscriptionExpiredModal();
-      return;
-    }
-    return fn.apply(this, arguments);
-  };
-}
-
-const GUARDED_FUNCTIONS = [
-  'openProductForm', 'openBatchForm', 'openCustomerForm', 
-  'openPurchaseForm', 'renderNewInvoice'
-];
-
-GUARDED_FUNCTIONS.forEach(function(name) {
-  const orig = window[name];
-  if(typeof orig === 'function') {
-    window[name] = wrapGuard(orig);
-  }
-});
-
-// Intercept delete buttons globally
-document.addEventListener('click', function(e) {
-  if(isSubActive()) return;
-  const t = e.target.closest('[data-del], [data-del-batch], #inv-save-btn');
-  if(t) {
-    e.preventDefault();
-    e.stopPropagation();
-    openSubscriptionExpiredModal();
-  }
-}, true);
-
-console.log('[Finora] All blocks loaded · APP READY');
-/* ══════════════════════════════════════════════════════════════════
-   FINORA — COMPLETE PAGES (SUPPLIERS, PURCHASES, ANALYTICS)
-   PASTE THIS AT THE VERY BOTTOM OF YOUR app.js
-   ══════════════════════════════════════════════════════════════════ */
-
-/* ─────────────────────────────────────────────
-   25. SUPPLIERS
-   ───────────────────────────────────────────── */
+/* ─── 17. SUPPLIERS ─────────────────────────────────────────────── */
 function renderSuppliers(content) {
   content.innerHTML = `
-    <div class="page-head">
-      <div class="page-head-title"><h1>Suppliers</h1><p>${DB.suppliers.length} paint companies & distributors</p></div>
-      <div class="page-head-actions"><button class="btn btn-primary" id="add-sup">+ Add Supplier</button></div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:20px; font-weight:700; color:var(--text-main);">Suppliers & Companies</h2>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Manage your paint distributors.</p>
+      </div>
+      <button class="btn btn-primary" onclick="openSupplierForm()">+ Add Supplier</button>
     </div>
+
     <div class="card" style="padding:0; overflow:hidden;">
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Company Name</th><th>Phone</th><th>Address</th><th style="text-align:right">Actions</th></tr></thead>
+          <thead>
+            <tr><th>Company Name</th><th>Phone</th><th>Address</th><th>Added On</th><th style="text-align:right;">Actions</th></tr>
+          </thead>
           <tbody>
-            ${DB.suppliers.length === 0 ? '<tr><td colspan="4" style="text-align:center;padding:40px;">No suppliers yet</td></tr>' : 
+            ${DB.suppliers.length === 0 ? '<tr><td colspan="5" style="text-align:center; padding:40px; color:var(--text-muted);">No suppliers added yet.</td></tr>' : 
               DB.suppliers.map(s => `
               <tr>
                 <td style="font-weight:600;">${esc(s.name)}</td>
-                <td>${esc(s.phone || '—')}</td>
-                <td class="text-sm text-muted">${esc(s.address || '—')}</td>
+                <td class="text-muted">${esc(s.phone || '—')}</td>
+                <td class="text-muted">${esc(s.address || '—')}</td>
+                <td class="text-muted">${fmtDate(s.created_at)}</td>
                 <td style="text-align:right;">
-                  <button class="btn btn-ghost btn-sm" onclick="openSupplierForm(${JSON.stringify(s).replace(/"/g, '&quot;')})">Edit</button>
+                  <button class="btn btn-ghost btn-sm" onclick="openSupplierForm('${s.id}')">Edit</button>
                 </td>
               </tr>
             `).join('')}
@@ -1802,59 +883,73 @@ function renderSuppliers(content) {
       </div>
     </div>
   `;
-  $('#add-sup').onclick = () => openSupplierForm();
 }
 
-function openSupplierForm(existing) {
+function openSupplierForm(id = null) {
+  const existing = id ? DB.suppliers.find(s => s.id === id) : null;
+  const isEdit = !!existing;
+  const s = existing || { name: '', phone: '', address: '' };
+
   openModal(`
-    <div class="modal-header"><div class="modal-title">${existing ? 'Edit' : 'New'} Supplier</div><button class="modal-close" onclick="closeModal()">✕</button></div>
-    <div class="modal-body">
-      <form id="sf" style="display:flex;flex-direction:column;gap:16px;">
-        <div><label class="label">Company Name *</label><input class="input" name="name" required value="${esc(existing?.name || '')}"></div>
-        <div><label class="label">Phone</label><input class="input" type="tel" name="phone" value="${esc(existing?.phone || '')}"></div>
-        <div><label class="label">Address</label><input class="input" name="address" value="${esc(existing?.address || '')}"></div>
-      </form>
-    </div>
-    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="sf-save">Save</button></div>
+    <h3 style="font-size:18px; font-weight:700; margin-bottom:20px;">${isEdit ? 'Edit' : 'New'} Supplier</h3>
+    <form id="sup-form" style="display:flex; flex-direction:column; gap:16px;">
+      <div>
+        <label class="label">Company Name *</label>
+        <input class="input" name="name" required value="${esc(s.name)}" placeholder="e.g. Asian Paints Ltd.">
+      </div>
+      <div>
+        <label class="label">Phone Number</label>
+        <input class="input" name="phone" value="${esc(s.phone)}">
+      </div>
+      <div>
+        <label class="label">Address</label>
+        <input class="input" name="address" value="${esc(s.address)}">
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Supplier</button>
+      </div>
+    </form>
   `, (root) => {
-    root.querySelector('#sf-save').onclick = async () => {
-      const form = root.querySelector('#sf');
-      if(!form.reportValidity()) return;
-      const fd = new FormData(form);
-      const data = { name: fd.get('name').trim(), phone: fd.get('phone').trim(), address: fd.get('address').trim(), type: 'company' };
+    root.querySelector('#sup-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const data = { name: fd.get('name').trim(), phone: fd.get('phone').trim(), address: fd.get('address').trim() };
       
-      let res;
-      if(existing) res = await sb.from('suppliers').update(data).eq('id', existing.id);
-      else res = await sb.from('suppliers').insert(data);
+      if (isEdit) await sb.from('suppliers').update(data).eq('id', id);
+      else await sb.from('suppliers').insert(data);
       
-      if(res.error) return toast(res.error.message, 'error');
-      await syncDB(); toast('Supplier saved', 'success'); closeModal(root); route();
+      await syncDB(); toast('Supplier saved', 'success'); closeModal(); route();
     };
   });
 }
 
-/* ─────────────────────────────────────────────
-   26. PURCHASES (LIST & CREATE BILL)
-   ───────────────────────────────────────────── */
+/* ─── 18. PURCHASES (CREATE BATCHES) ────────────────────────────── */
 function renderPurchases(content) {
   content.innerHTML = `
-    <div class="page-head">
-      <div class="page-head-title"><h1>Purchases</h1><p>${DB.supplier_invoices.length} purchase bills</p></div>
-      <div class="page-head-actions"><button class="btn btn-primary" onclick="openPurchaseForm()">+ New Purchase Bill</button></div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:20px; font-weight:700; color:var(--text-main);">Purchases</h2>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Record incoming stock and create batches.</p>
+      </div>
+      <button class="btn btn-primary" onclick="openPurchaseForm()">+ New Purchase</button>
     </div>
+
     <div class="card" style="padding:0; overflow:hidden;">
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Bill No</th><th>Supplier</th><th>Date</th><th>Total</th><th>Status</th></tr></thead>
+          <thead>
+            <tr><th>Bill No</th><th>Supplier</th><th>Date</th><th>Total Amount</th><th>Status</th></tr>
+          </thead>
           <tbody>
-            ${DB.supplier_invoices.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:40px;">No purchase bills yet</td></tr>' : 
+            ${DB.supplier_invoices.length === 0 ? '<tr><td colspan="5" style="text-align:center; padding:40px; color:var(--text-muted);">No purchase bills yet.</td></tr>' : 
               DB.supplier_invoices.map(b => {
                 const sup = DB.suppliers.find(s => s.id === b.supplier_id);
                 return `
                 <tr>
                   <td style="font-weight:600;">${esc(b.bill_no || '—')}</td>
-                  <td>${esc(sup ? sup.name : '—')}</td>
-                  <td class="text-sm text-muted">${fmtDate(b.bill_date)}</td>
+                  <td class="text-muted">${esc(sup ? sup.name : 'Unknown')}</td>
+                  <td class="text-muted">${fmtDate(b.bill_date)}</td>
                   <td style="font-weight:600;">${rs(b.total)}</td>
                   <td><span class="chip ${b.paid >= b.total ? 'chip-success' : 'chip-warning'}">${b.paid >= b.total ? 'Paid' : 'Unpaid'}</span></td>
                 </tr>
@@ -1867,218 +962,661 @@ function renderPurchases(content) {
 }
 
 function openPurchaseForm() {
-  if(DB.suppliers.length === 0) return toast('Please add a supplier first', 'error');
+  if (DB.suppliers.length === 0) return toast('Please add a Supplier first', 'error');
   
   let cart = [];
 
   openModal(`
-    <div class="modal-header"><div class="modal-title">New Purchase Bill</div><button class="modal-close" onclick="closeModal()">✕</button></div>
-    <div class="modal-body" style="max-width:700px;">
-      <form id="puf" style="display:flex;flex-direction:column;gap:16px;">
-        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div>
-            <label class="label">Supplier *</label>
-            <select class="input" name="supplier_id" required id="puf-sup">
-              <option value="">Select Supplier</option>
-              ${DB.suppliers.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <label class="label">Bill No</label>
-            <input class="input" name="bill_no" required placeholder="Vendor Bill No">
-          </div>
+    <h3 style="font-size:18px; font-weight:700; margin-bottom:20px;">New Purchase Bill</h3>
+    <form id="pur-form" style="display:flex; flex-direction:column; gap:16px;">
+      
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div>
+          <label class="label">Supplier *</label>
+          <select class="input" name="supplier_id" required>
+            <option value="">Select Supplier</option>
+            ${DB.suppliers.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Bill No</label>
+          <input class="input" name="bill_no" required placeholder="Invoice No">
+        </div>
+      </div>
+
+      <div style="background:var(--bg-main); padding:16px; border-radius:12px;">
+        <label class="label" style="margin-bottom:12px; color:var(--primary);">Add Items</label>
+        <div style="display:grid; grid-template-columns:2fr 1fr; gap:12px; margin-bottom:12px;">
+          <select class="input" id="pur-prod">
+            <option value="">Select Product...</option>
+            ${DB.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.brand || '')})</option>`).join('')}
+          </select>
+          <input class="input" type="number" id="pur-qty" value="1" placeholder="Qty">
         </div>
 
-        <div style="padding:16px;background:var(--bg-app);border-radius:8px;border:1px solid var(--border);">
-          <label class="label" style="margin-bottom:12px;">Add Items (Creates Batches)</label>
-          <div class="grid-3" style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:12px;">
-            <select class="input" id="puf-prod">
-              <option value="">Select Product...</option>
-              ${DB.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.brand || '')})</option>`).join('')}
-            </select>
-            <input class="input" type="number" id="puf-qty" placeholder="Qty" value="1">
-            <button type="button" class="btn btn-ghost" onclick="addPurchaseItem()">Add</button>
-          </div>
-          
-          <div id="puf-batch-fields" style="display:none; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
-            <div><label class="label">Batch No</label><input class="input" id="puf-batch" placeholder="Batch No"></div>
-            <div><label class="label">Expiry</label><input class="input" type="date" id="puf-expiry"></div>
-            <div><label class="label">Cost Price</label><input class="input" type="number" id="puf-cost" placeholder="Cost ₹"></div>
-            <div><label class="label">Selling Price</label><input class="input" type="number" id="puf-sell" placeholder="Sell ₹"></div>
-          </div>
-
-          <table style="width:100%; font-size:13px; margin-top:12px;">
-            <tbody id="puf-cart-body"></tbody>
-          </table>
+        <div id="pur-batch-fields" style="display:none; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <input class="input" id="pur-batch" placeholder="Batch No">
+          <input class="input" type="date" id="pur-expiry" placeholder="Expiry">
+          <input class="input" type="number" id="pur-cost" placeholder="Cost ₹">
+          <input class="input" type="number" id="pur-sell" placeholder="Sell ₹">
         </div>
 
-        <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:1px solid var(--border);">
-          <b>Total: <span id="puf-total" style="color:var(--primary);font-size:18px;">₹0.00</span></b>
-          <button type="button" class="btn btn-primary" id="puf-save">Save Bill</button>
+        <button type="button" class="btn btn-ghost" style="width:100%; border:1px dashed var(--primary);" onclick="addPurItem()">+ Add Item to Bill</button>
+        
+        <div id="pur-cart" style="margin-top:16px; display:flex; flex-direction:column; gap:8px;"></div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; padding-top:16px; border-top:1px solid var(--border);">
+        <div style="font-size:16px; font-weight:700;">Total: <span id="pur-total" style="color:var(--primary);">₹0.00</span></div>
+        <div style="display:flex; gap:10px;">
+          <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Bill</button>
         </div>
-      </form>
-    </div>
+      </div>
+    </form>
   `, (root) => {
-    // Show batch fields if batch-managed product is selected
-    root.querySelector('#puf-prod').onchange = (e) => {
+    root.querySelector('#pur-prod').onchange = (e) => {
       const p = DB.products.find(x => x.id === e.target.value);
-      root.querySelector('#puf-batch-fields').style.display = (p && p.batch_managed) ? 'grid' : 'none';
+      root.querySelector('#pur-batch-fields').style.display = (p && p.batch_managed) ? 'grid' : 'none';
     };
 
-    window.addPurchaseItem = () => {
-      const pid = root.querySelector('#puf-prod').value;
-      const qty = Number(root.querySelector('#puf-qty').value) || 1;
-      if(!pid) return toast('Select product', 'error');
+    window.addPurItem = () => {
+      const pid = root.querySelector('#pur-prod').value;
+      const qty = Number(root.querySelector('#pur-qty').value);
+      if (!pid || qty <= 0) return toast('Select product and valid qty', 'error');
       
       const p = DB.products.find(x => x.id === pid);
-      const batchNo = root.querySelector('#puf-batch').value;
-      const expiry = root.querySelector('#puf-expiry').value;
-      const cost = Number(root.querySelector('#puf-cost').value) || 0;
-      const sell = Number(root.querySelector('#puf-sell').value) || 0;
-
-      if(p.batch_managed && (!batchNo || !cost || !sell)) return toast('Fill all batch details', 'error');
-
-      cart.push({ product_id: pid, name: p.name, qty, batch_no: batchNo, expiry, cost, sell, total: qty * cost });
+      const isBatch = p.batch_managed;
       
-      root.querySelector('#puf-cart-body').innerHTML = cart.map((c, i) => `
-        <tr style="border-bottom:1px solid #eee;">
-          <td>${esc(c.name)} ${c.batch_no ? `(B: ${c.batch_no})` : ''}</td>
-          <td>${c.qty} x ₹${c.cost}</td>
-          <td style="text-align:right;font-weight:600;">₹${c.total}</td>
-        </tr>
+      const batchNo = root.querySelector('#pur-batch').value;
+      const expiry = root.querySelector('#pur-expiry').value;
+      const cost = Number(root.querySelector('#pur-cost').value) || 0;
+      const sell = Number(root.querySelector('#pur-sell').value) || 0;
+
+      if (isBatch && (!batchNo || cost <= 0 || sell <= 0)) return toast('Fill all batch details', 'error');
+
+      cart.push({ product_id: pid, name: p.name, qty, isBatch, batch_no: batchNo, expiry, cost, sell, total: qty * cost });
+      
+      root.querySelector('#pur-cart').innerHTML = cart.map((c, i) => `
+        <div style="display:flex; justify-content:space-between; font-size:13px; padding:8px; background:#fff; border-radius:8px; border:1px solid var(--border);">
+          <div><b>${esc(c.name)}</b> ${c.batch_no ? `(B: ${c.batch_no})` : ''} <br><span style="color:var(--text-muted);">${c.qty} x ₹${c.cost}</span></div>
+          <div style="font-weight:700;">₹${c.total}</div>
+        </div>
       `).join('');
       
-      root.querySelector('#puf-total').textContent = rs(cart.reduce((s, c) => s + c.total, 0));
+      root.querySelector('#pur-total').textContent = rs(cart.reduce((s, c) => s + c.total, 0));
     };
 
-    root.querySelector('#puf-save').onclick = async () => {
-      const supId = root.querySelector('#puf-sup').value;
-      const billNo = root.querySelector('#puf-bill_no')?.value || root.querySelector('[name="bill_no"]').value;
-      if(!supId) return toast('Select supplier', 'error');
-      if(cart.length === 0) return toast('Add items first', 'error');
+    root.querySelector('#pur-form').onsubmit = async (e) => {
+      e.preventDefault();
+      if (cart.length === 0) return toast('Add items to the bill first', 'error');
+      
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.textContent = 'Saving...'; btn.disabled = true;
 
-      const btn = root.querySelector('#puf-save');
-      btn.disabled = true; btn.textContent = 'Saving...';
-
+      const fd = new FormData(e.target);
       const total = cart.reduce((s, c) => s + c.total, 0);
 
-      // 1. Create Bill Header
+      // 1. Create Bill
       const { data: bill, error: bErr } = await sb.from('supplier_invoices').insert({
-        supplier_id: supId, bill_no: billNo, bill_date: todayStr(), total: total, paid: total
+        supplier_id: fd.get('supplier_id'), bill_no: fd.get('bill_no'), bill_date: todayStr(), total: total, paid: total
       }).select().single();
 
-      if(bErr) { toast(bErr.message, 'error'); btn.disabled = false; return; }
+      if (bErr) { toast(bErr.message, 'error'); btn.textContent = 'Save Bill'; btn.disabled = false; return; }
 
-      // 2. Create Bill Items & Batches
-      for(const item of cart) {
+      // 2. Insert Items and Batches
+      for (const item of cart) {
         await sb.from('supplier_invoice_items').insert({
-          supplier_invoice_id: bill.id, product_id: item.product_id, product_name: item.name,
-          batch_no: item.batch_no, qty: item.qty, cost: item.cost, total: item.total
+          supplier_invoice_id: bill.id, product_id: item.product_id, batch_no: item.batch_no, expiry_date: item.expiry, qty: item.qty, cost: item.cost, total: item.total
         });
 
-        if(item.batch_no) {
+        if (item.isBatch) {
           await sb.from('product_batches').insert({
-            product_id: item.product_id, batch_no: item.batch_no, expiry_date: item.expiry,
-            qty: item.qty, cost: item.cost, selling_price: item.sell, mrp: item.sell
+            product_id: item.product_id, batch_no: item.batch_no, expiry_date: item.expiry, qty: item.qty, cost: item.cost, selling_price: item.sell
           });
         } else {
-          // Non-batch product, just update product stock
+          // Non-batch stock update
           const { data: p } = await sb.from('products').select('stock').eq('id', item.product_id).single();
           await sb.from('products').update({ stock: (p.stock || 0) + item.qty, cost: item.cost, selling_price: item.sell }).eq('id', item.product_id);
         }
       }
 
-      await syncDB();
-      toast('Purchase bill saved & stock updated', 'success');
-      closeModal(root);
-      route();
+      await syncDB(); toast('Purchase saved', 'success'); closeModal(); route();
     };
   });
 }
 
-/* ─────────────────────────────────────────────
-   27. ANALYTICS
-   ───────────────────────────────────────────── */
-function renderAnalytics(content) {
+/* ─── 19. INVOICES (LIST & POS) ─────────────────────────────────── */
+function renderInvoices(content) {
   content.innerHTML = `
-    <div class="page-head">
-      <div class="page-head-title"><h1>Analytics</h1><p>Business insights</p></div>
-    </div>
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-title">Sales vs Purchases (Last 30 Days)</div>
-        <div style="height:300px;"><canvas id="an-ch1"></canvas></div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:20px; font-weight:700; color:var(--text-main);">Invoices</h2>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Sell paints and manage sales.</p>
       </div>
+      <button class="btn btn-primary" onclick="location.hash='#/new-invoice'">+ New Invoice</button>
+    </div>
+
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Invoice No</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th><th style="text-align:right;">Action</th></tr>
+          </thead>
+          <tbody>
+            ${DB.invoices.length === 0 ? '<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text-muted);">No invoices yet.</td></tr>' : 
+              DB.invoices.map(i => `
+              <tr>
+                <td style="font-weight:600;">${esc(i.invoice_no)}</td>
+                <td class="text-muted">${esc(i.customer_name || 'Walk-in')}</td>
+                <td class="text-muted">${fmtDate(i.invoice_date)}</td>
+                <td style="font-weight:600;">${rs(i.total)}</td>
+                <td><span class="chip ${i.due > 0 ? 'chip-warning' : 'chip-success'}">${i.due > 0 ? 'Unpaid' : 'Paid'}</span></td>
+                <td style="text-align:right;">
+                  <button class="btn btn-ghost btn-sm" onclick="location.hash='#/invoice/${i.id}'">View</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderNewInvoice(content) {
+  let cart = [];
+
+  content.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:20px; font-weight:700; color:var(--text-main);">New Invoice (POS)</h2>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Select products and batches to sell.</p>
+      </div>
+      <button class="btn btn-ghost" onclick="location.hash='#/invoices'">Cancel</button>
+    </div>
+
+    <div style="display:grid; grid-template-columns:2fr 1.2fr; gap:24px; align-items:start;">
+      
+      <!-- LEFT: CART -->
       <div class="card">
-        <div class="card-title">Top Selling Products</div>
-        <div style="height:300px;"><canvas id="an-ch2"></canvas></div>
+        <div style="display:flex; gap:12px; margin-bottom:20px; background:var(--bg-main); padding:16px; border-radius:12px;">
+          <div style="flex:1;">
+            <label class="label">Select Product</label>
+            <select class="input" id="pos-prod">
+              <option value="">Choose product...</option>
+              ${DB.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.color || '')})</option>`).join('')}
+            </select>
+          </div>
+          <div style="flex:1; display:none;" id="pos-batch-wrap">
+            <label class="label">Select Batch</label>
+            <select class="input" id="pos-batch"></select>
+          </div>
+        </div>
+
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead>
+            <tbody id="pos-cart-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- RIGHT: SUMMARY -->
+      <div class="card" style="position:sticky; top:30px;">
+        <h3 style="font-size:16px; font-weight:700; margin-bottom:16px;">Summary</h3>
+        
+        <div style="margin-bottom:16px;">
+          <label class="label">Customer</label>
+          <select class="input" id="pos-cust">
+            <option value="">Walk-in Customer</option>
+            ${DB.customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+          </select>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+          <span class="text-muted">Subtotal</span><b id="pos-subtotal">₹0.00</b>
+        </div>
+        <div style="display:flex; justify-content:space-between; padding-top:16px; border-top:1px solid var(--border); margin-bottom:24px;">
+          <b style="font-size:16px;">Total</b><b id="pos-total" style="color:var(--primary); font-size:20px;">₹0.00</b>
+        </div>
+        
+        <button class="btn btn-primary" style="width:100%; height:48px;" id="pos-save">Save Invoice</button>
       </div>
     </div>
   `;
 
-  if(charts.length) charts.forEach(c => c.destroy());
-  
-  const ctx1 = document.getElementById('an-ch1');
-  if(ctx1) {
-    charts.push(new Chart(ctx1, {
-      type: 'line',
-      data: {
-        labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'],
-        datasets: [
-          { label: 'Sales', data: [15000, 22000, 18000, 30000], borderColor: '#5B4DF2', tension: 0.4 },
-          { label: 'Purchases', data: [10000, 15000, 12000, 18000], borderColor: '#F79009', tension: 0.4 }
-        ]
-      },
-      options: { responsive: true, maintainAspectRatio: false }
-    }));
+  // Product Selection Logic
+  $('#pos-prod').onchange = (e) => {
+    const pid = e.target.value;
+    if(!pid) { $('#pos-batch-wrap').style.display = 'none'; return; }
+    
+    const p = DB.products.find(x => x.id === pid);
+    if (p.batch_managed) {
+      const batches = DB.product_batches.filter(b => b.product_id === pid && b.qty > 0);
+      if (batches.length === 0) {
+        toast('No stock available for this paint', 'error');
+        e.target.value = '';
+        $('#pos-batch-wrap').style.display = 'none';
+        return;
+      }
+      $('#pos-batch-wrap').style.display = 'block';
+      $('#pos-batch').innerHTML = batches.map(b => `<option value="${b.id}">${esc(b.batch_no)} (Qty: ${b.qty})</option>`).join('');
+    } else {
+      $('#pos-batch-wrap').style.display = 'none';
+      addToCart(p, null);
+      e.target.value = '';
+    }
+  };
+
+  $('#pos-batch').onchange = (e) => {
+    const bid = e.target.value;
+    const pid = $('#pos-prod').value;
+    if (!bid || !pid) return;
+    addToCart(DB.products.find(x => x.id === pid), DB.product_batches.find(x => x.id === bid));
+    $('#pos-prod').value = ''; 
+    $('#pos-batch-wrap').style.display = 'none';
+  };
+
+  function addToCart(product, batch) {
+    const price = batch ? Number(batch.selling_price) : Number(product.selling_price);
+    const existing = cart.find(c => c.product_id === product.id && c.batch_id === (batch ? batch.id : null));
+    
+    if (existing) {
+      existing.qty++;
+      existing.total = existing.qty * existing.price;
+    } else {
+      cart.push({
+        product_id: product.id, batch_id: batch ? batch.id : null, name: product.name,
+        batch_no: batch ? batch.batch_no : null, qty: 1, price: price, total: price, max_qty: batch ? batch.qty : product.stock
+      });
+    }
+    renderCart();
   }
 
-  const ctx2 = document.getElementById('an-ch2');
-  if(ctx2) {
-    charts.push(new Chart(ctx2, {
-      type: 'doughnut',
-      data: {
-        labels: ['Emulsion', 'Enamel', 'Primer', 'Tools'],
-        datasets: [{ data: [45, 25, 20, 10], backgroundColor: ['#5B4DF2', '#2E90FA', '#F79009', '#1FC16B'] }]
-      },
-      options: { responsive: true, maintainAspectRatio: false, cutout: '70%' }
-    }));
+  function renderCart() {
+    const tbody = $('#pos-cart-body');
+    if (cart.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--text-muted);">Cart is empty</td></tr>';
+      updateTotals(); return;
+    }
+
+    tbody.innerHTML = cart.map((c, i) => `
+      <tr>
+        <td>
+          <div style="font-weight:600;">${esc(c.name)}</div>
+          ${c.batch_no ? `<div style="font-size:11px; color:var(--text-muted);">Batch: ${esc(c.batch_no)}</div>` : ''}
+        </td>
+        <td>
+          <input type="number" min="1" max="${c.max_qty}" value="${c.qty}" onchange="updateCartQty(${i}, this.value)" style="width:60px; padding:6px; border:1px solid var(--border); border-radius:6px;">
+        </td>
+        <td>${rs(c.price)}</td>
+        <td style="font-weight:600;">${rs(c.total)}</td>
+        <td style="text-align:right;"><button onclick="removeCartItem(${i})" style="color:var(--red); font-size:16px;">✕</button></td>
+      </tr>
+    `).join('');
+    updateTotals();
+  }
+
+  window.updateCartQty = (i, val) => {
+    const qty = parseInt(val);
+    if (qty < 1) return;
+    if (qty > cart[i].max_qty) { toast('Not enough stock', 'error'); return renderCart(); }
+    cart[i].qty = qty;
+    cart[i].total = qty * cart[i].price;
+    renderCart();
+  };
+
+  window.removeCartItem = (i) => { cart.splice(i, 1); renderCart(); };
+
+  function updateTotals() {
+    const sub = cart.reduce((s, c) => s + c.total, 0);
+    $('#pos-subtotal').textContent = rs(sub);
+    $('#pos-total').textContent = rs(sub);
+  }
+
+  $('#pos-save').onclick = async () => {
+    if (cart.length === 0) return toast('Cart is empty', 'error');
+    const btn = $('#pos-save');
+    btn.textContent = 'Saving...'; btn.disabled = true;
+
+    const custId = $('#pos-cust').value;
+    const custName = custId ? DB.customers.find(c => c.id === custId).name : 'Walk-in';
+    const sub = cart.reduce((s, c) => s + c.total, 0);
+    
+    // Generate Invoice No
+    let max = 0;
+    DB.invoices.forEach(inv => { const m = String(inv.invoice_no).match(/(\d+)/); if(m && parseInt(m[1]) > max) max = parseInt(m[1]); });
+    const invNo = 'INV-' + String(max + 1).padStart(4, '0');
+
+    // 1. Create Invoice
+    const { data: inv, error: invErr } = await sb.from('invoices').insert({
+      invoice_no: invNo, customer_id: custId || null, customer_name: custName,
+      subtotal: sub, total: sub, paid: sub, due: 0, invoice_date: todayStr()
+    }).select().single();
+
+    if (invErr) { toast(invErr.message, 'error'); btn.textContent = 'Save Invoice'; btn.disabled = false; return; }
+
+    // 2. Create Items & Deduct Stock
+    for (const item of cart) {
+      await sb.from('invoice_items').insert({
+        invoice_id: inv.id, product_id: item.product_id, batch_id: item.batch_id,
+        product_name: item.name, batch_no: item.batch_no, qty: item.qty, price: item.price, total: item.total
+      });
+
+      if (item.batch_id) {
+        const { data: b } = await sb.from('product_batches').select('qty').eq('id', item.batch_id).single();
+        await sb.from('product_batches').update({ qty: b.qty - item.qty }).eq('id', item.batch_id);
+      } else {
+        const { data: p } = await sb.from('products').select('stock').eq('id', item.product_id).single();
+        await sb.from('products').update({ stock: p.stock - item.qty }).eq('id', item.product_id);
+      }
+    }
+
+    await syncDB(); toast('Invoice Saved!', 'success'); location.hash = '#/invoices';
+  };
+
+  renderCart();
+}
+
+/* ─── 20. ROUTER UPDATE ─────────────────────────────────────────── */
+const prevRoute = route;
+route = async function() {
+  if (!SESSION) return renderLogin();
+  
+  renderLayout();
+  const path = location.hash || '#/';
+  const content = $('#content');
+  
+  if (path === '#/' || path === '') renderDashboard(content);
+  else if (path === '#/products') renderProducts(content);
+  else if (path === '#/customers') renderCustomers(content);
+  else if (path === '#/suppliers') renderSuppliers(content);
+  else if (path === '#/purchases') renderPurchases(content);
+  else if (path === '#/invoices') renderInvoices(content);
+  else if (path === '#/new-invoice') renderNewInvoice(content);
+  else content.innerHTML = `<div class="card" style="text-align:center; padding:60px;"><h2>Page under construction</h2></div>`;
+};
+
+route();
+/* ══════════════════════════════════════════════════════════════════
+   FINORA PAINT SHOP — PART 4 (INVOICE VIEW, PRINTING, SHARING)
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ─── 21. SUBSCRIPTION GUARD (MANDATORY) ────────────────────────── */
+// A simple guard to check if the user is allowed to make changes.
+window.checkSubscription = function() {
+  // In a real scenario, this checks window.SUB.expires_at > Date.now()
+  // For now, we will assume it is active unless manually set to false.
+  if (window.SUB && window.SUB.active === false) {
+    openModal(`
+      <div style="text-align:center; padding:20px;">
+        <div style="font-size:40px; margin-bottom:16px;">⚠️</div>
+        <h3 style="font-size:20px; font-weight:700; color:var(--red); margin-bottom:8px;">Subscription Expired</h3>
+        <p style="font-size:14px; color:var(--text-muted); margin-bottom:24px;">Please renew your plan to continue adding data.</p>
+        <button class="btn btn-primary" onclick="closeModal()">Renew Now</button>
+      </div>
+    `);
+    return false;
+  }
+  return true;
+};
+
+/* ─── 22. INVOICE VIEW ──────────────────────────────────────────── */
+function renderInvoiceView(content, id) {
+  const inv = DB.invoices.find(x => x.id === id);
+  if (!inv) {
+    content.innerHTML = `<div class="card" style="text-align:center; padding:60px;"><h2>Invoice not found</h2></div>`;
+    return;
+  }
+
+  const items = DB.invoice_items.filter(x => x.invoice_id === inv.id);
+  
+  content.innerHTML = `
+    <div style="margin-bottom:20px;">
+      <a href="#/invoices" style="color:var(--text-muted); font-size:14px; font-weight:500; display:inline-flex; align-items:center; gap:6px;">
+        ← Back to Invoices
+      </a>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:24px;">
+      <div>
+        <h2 style="font-size:24px; font-weight:700; color:var(--text-main);">Invoice ${esc(inv.invoice_no)}</h2>
+        <p style="font-size:14px; color:var(--text-muted); margin-top:4px;">${fmtDate(inv.invoice_date)} · ${esc(inv.customer_name)}</p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-ghost" onclick="printThermal('${inv.id}')">🖨 Thermal</button>
+        <button class="btn btn-ghost" onclick="downloadPDF('${inv.id}')">📄 A4 PDF</button>
+        <button class="btn" style="background:#25D366; color:#fff;" onclick="sendWhatsApp('${inv.id}')">💬 WhatsApp</button>
+      </div>
+    </div>
+
+    <!-- The Paper Receipt -->
+    <div class="card" style="max-width:800px; margin:0 auto; padding:40px; box-shadow:0 10px 40px rgba(0,0,0,0.08);">
+      
+      <!-- Header -->
+      <div style="display:flex; justify-content:space-between; border-bottom:2px solid var(--bg-main); padding-bottom:24px; margin-bottom:24px;">
+        <div>
+          <div style="font-size:24px; font-weight:700; color:var(--primary); margin-bottom:4px;">${esc(SETTINGS.shop_name)}</div>
+          <div style="font-size:13px; color:var(--text-muted);">${esc(SETTINGS.address || '')}</div>
+          ${SETTINGS.phone ? `<div style="font-size:13px; color:var(--text-muted);">Ph: ${esc(SETTINGS.phone)}</div>` : ''}
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:12px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px;">Invoice Details</div>
+          <div style="font-size:14px; font-weight:600; margin-top:4px;">${esc(inv.invoice_no)}</div>
+          <div style="font-size:14px; color:var(--text-muted);">${fmtDate(inv.invoice_date)}</div>
+        </div>
+      </div>
+
+      <!-- Billed To -->
+      <div style="margin-bottom:32px;">
+        <div style="font-size:12px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">Billed To</div>
+        <div style="font-size:16px; font-weight:600;">${esc(inv.customer_name)}</div>
+      </div>
+
+      <!-- Items -->
+      <table style="width:100%; margin-bottom:32px;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);">
+            <th style="text-align:left; padding-bottom:12px; font-size:12px; color:var(--text-muted);">Item Description</th>
+            <th style="text-align:center; padding-bottom:12px; font-size:12px; color:var(--text-muted);">Batch</th>
+            <th style="text-align:center; padding-bottom:12px; font-size:12px; color:var(--text-muted);">Qty</th>
+            <th style="text-align:right; padding-bottom:12px; font-size:12px; color:var(--text-muted);">Price</th>
+            <th style="text-align:right; padding-bottom:12px; font-size:12px; color:var(--text-muted);">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(it => `
+            <tr style="border-bottom:1px solid var(--bg-main);">
+              <td style="padding:16px 0; font-weight:600; color:var(--text-main);">${esc(it.product_name)}</td>
+              <td style="text-align:center; color:var(--text-muted); font-size:13px;">${esc(it.batch_no || '—')}</td>
+              <td style="text-align:center; font-weight:600;">${it.qty}</td>
+              <td style="text-align:right; color:var(--text-muted);">${rs(it.price)}</td>
+              <td style="text-align:right; font-weight:700;">${rs(it.total)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      <!-- Totals -->
+      <div style="display:flex; justify-content:flex-end;">
+        <div style="width:250px;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px;">
+            <span style="color:var(--text-muted);">Subtotal</span>
+            <span style="font-weight:600;">${rs(inv.subtotal)}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; padding-top:12px; border-top:1px solid var(--border); font-size:16px;">
+            <span style="font-weight:700;">Total</span>
+            <span style="font-weight:700; color:var(--primary);">${rs(inv.total)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:40px; text-align:center; font-size:12px; color:var(--text-muted);">
+        Thank you for your business!
+      </div>
+    </div>
+  `;
+}
+
+/* ─── 23. PRINTING & SHARING ────────────────────────────────────── */
+
+// 1. WhatsApp
+function sendWhatsApp(invId) {
+  const inv = DB.invoices.find(x => x.id === invId);
+  const items = DB.invoice_items.filter(x => x.invoice_id === invId);
+  
+  let msg = `*${SETTINGS.shop_name}*\n\n`;
+  msg += `*Invoice:* ${inv.invoice_no}\n`;
+  msg += `*Date:* ${fmtDate(inv.invoice_date)}\n`;
+  msg += `*Customer:* ${inv.customer_name}\n\n`;
+  msg += `*Items:*\n`;
+  
+  items.forEach(it => {
+    msg += `- ${it.product_name} ${it.batch_no ? `(B: ${it.batch_no})` : ''}\n`;
+    msg += `  ${it.qty} x ${rs(it.price)} = ${rs(it.total)}\n`;
+  });
+
+  msg += `\n*Total: ${rs(inv.total)}*\n\nThank you!`;
+
+  window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+}
+
+// 2. A4 PDF (jsPDF)
+function downloadPDF(invId) {
+  const inv = DB.invoices.find(x => x.id === invId);
+  const items = DB.invoice_items.filter(x => x.invoice_id === invId);
+  
+  if (!window.jspdf) return toast('PDF library loading...', 'info');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF('p', 'mm', 'a4');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(22);
+  doc.setTextColor(67, 24, 255); // Finora Purple
+  doc.text(SETTINGS.shop_name || 'Finora Paints', 14, 20);
+  
+  doc.setFontSize(10);
+  doc.setTextColor(100);
+  doc.setFont('helvetica', 'normal');
+  doc.text(SETTINGS.address || '', 14, 28);
+  doc.text(SETTINGS.phone ? 'Ph: ' + SETTINGS.phone : '', 14, 33);
+
+  doc.setFontSize(14);
+  doc.setTextColor(0);
+  doc.setFont('helvetica', 'bold');
+  doc.text('INVOICE', 14, 45);
+  
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Bill To: ' + inv.customer_name, 14, 52);
+  doc.text('Date: ' + fmtDate(inv.invoice_date), 14, 57);
+  doc.text('Invoice No: ' + inv.invoice_no, 14, 62);
+
+  const tableBody = items.map(it => [
+    it.product_name,
+    it.batch_no || '-',
+    it.qty.toString(),
+    Number(it.price).toFixed(2),
+    Number(it.total).toFixed(2)
+  ]);
+
+  doc.autoTable({
+    startY: 70,
+    head: [['Item', 'Batch', 'Qty', 'Rate', 'Total']],
+    body: tableBody,
+    theme: 'grid',
+    headStyles: { fillColor: [67, 24, 255] }
+  });
+
+  let finalY = doc.lastAutoTable.finalY + 10;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Total: Rs. ' + Number(inv.total).toFixed(2), 150, finalY);
+
+  doc.save('Invoice-' + inv.invoice_no + '.pdf');
+  toast('PDF Downloaded', 'success');
+}
+
+// 3. Thermal Print (WebUSB)
+async function printThermal(invId) {
+  const inv = DB.invoices.find(x => x.id === invId);
+  const items = DB.invoice_items.filter(x => x.invoice_id === invId);
+  
+  if (typeof ReceiptPrinterEncoder === 'undefined') return toast('Printer library not loaded', 'error');
+  if (!navigator.usb) return toast('WebUSB not supported. Use Chrome/Edge.', 'error');
+
+  const W = 32; // 58mm standard
+  const line = (l, r) => {
+    l = String(l || ''); r = String(r || '');
+    if(l.length + r.length >= W) l = l.slice(0, Math.max(0, W - r.length - 1));
+    return l + ' '.repeat(Math.max(1, W - l.length - r.length)) + r;
+  };
+
+  const enc = new ReceiptPrinterEncoder({ language: 'esc-pos' });
+  
+  enc.initialize();
+  enc.align('center').bold(true).size(2, 2).text(SETTINGS.shop_name).newline();
+  enc.size(1, 1).bold(false);
+  enc.text(SETTINGS.phone ? 'Ph: ' + SETTINGS.phone : '').newline();
+  enc.newline();
+  
+  enc.align('left').text('-'.repeat(W)).newline();
+  enc.text(line('Bill: ' + inv.invoice_no, fmtDate(inv.invoice_date))).newline();
+  enc.text(line('Cust: ' + inv.customer_name, '')).newline();
+  enc.text('-'.repeat(W)).newline();
+
+  items.forEach(it => {
+    enc.text(it.product_name).newline();
+    if(it.batch_no) enc.text('  Batch: ' + it.batch_no).newline();
+    enc.text(line('  ' + it.qty + ' x ' + Number(it.price).toFixed(2), Number(it.total).toFixed(2))).newline();
+  });
+
+  enc.text('-'.repeat(W)).newline();
+  enc.bold(true).text(line('TOTAL:', 'Rs.' + Number(inv.total).toFixed(2))).bold(false).newline();
+  enc.newline();
+  enc.align('center').text('Thank you! Visit again.').newline();
+  enc.newline(3);
+  enc.cut();
+
+  try {
+    const device = await navigator.usb.requestDevice({ filters: [] });
+    await device.open();
+    if (device.configuration === null) await device.selectConfiguration(1);
+    await device.claimInterface(0);
+    const ep = device.configuration.interfaces[0].alternates[0].endpoints.find(e => e.direction === 'out');
+    
+    if (ep) {
+      await device.transferOut(ep.endpointNumber, enc.encode());
+      toast('Sent to Printer', 'success');
+    } else {
+      toast('No output endpoint found', 'error');
+    }
+  } catch (err) {
+    if (err.name !== 'NotFoundError') toast('Printer connection failed', 'error');
   }
 }
 
-/* ─────────────────────────────────────────────
-   28. ROUTER UPDATE (Wires everything together)
-   ───────────────────────────────────────────── */
+/* ─── 24. FINAL ROUTER UPDATE ───────────────────────────────────── */
 route = async function() {
-  const path = location.hash.split('?')[0] || '#/';
-  
-  if(!SESSION && path !== '#/login') { renderLogin(); return; }
-  
-  if(!window.DB_SYNCED) {
-    $('#app').innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;"><div class="spinner" style="border:3px solid #eee;border-top-color:#5B4DF2;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;"></div></div>';
-    await syncDB();
-    await loadSubscription();
-  }
+  if (!SESSION) return renderLogin();
   
   renderLayout();
+  const path = location.hash || '#/';
   const content = $('#content');
   
-  try {
-    if(path === '#/') renderDashboard(content);
-    else if(path === '#/products') renderProducts(content);
-    else if(path === '#/invoices') renderInvoices(content);
-    else if(path === '#/customers') renderCustomers(content);
-    else if(path === '#/suppliers') renderSuppliers(content);
-    else if(path === '#/purchases') renderPurchases(content);
-    else if(path === '#/analytics') renderAnalytics(content);
-    else if(path === '#/myshop') renderMyShop(content);
-    else if(path.startsWith('#/invoice/')) renderInvoiceView(content, path.replace('#/invoice/', ''));
-    else if(path === '#/new-invoice') renderNewInvoice(content);
-    else { content.innerHTML = '<div class="card"><h2>Page under construction</h2></div>'; }
-  } catch(e) { 
-    content.innerHTML = `<div class="card" style="color:red;padding:20px;">Error: ${e.message}</div>`; 
+  if (path === '#/' || path === '') renderDashboard(content);
+  else if (path === '#/products') renderProducts(content);
+  else if (path === '#/customers') renderCustomers(content);
+  else if (path === '#/suppliers') renderSuppliers(content);
+  else if (path === '#/purchases') renderPurchases(content);
+  else if (path === '#/invoices') renderInvoices(content);
+  else if (path === '#/new-invoice') renderNewInvoice(content);
+  else if (path.startsWith('#/invoice/')) {
+    const id = path.split('/')[2];
+    renderInvoiceView(content, id);
   }
+  else content.innerHTML = `<div class="card" style="text-align:center; padding:60px;"><h2>Page under construction</h2></div>`;
 };
 
-// Re-boot the router to apply the new routes
+// Re-run the router to apply changes
 route();
