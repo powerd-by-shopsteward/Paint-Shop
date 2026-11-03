@@ -1,17 +1,4 @@
 /* ══════════════════════════════════════════════════════════════
-   1. CORE CONFIG & SUPABASE
-   ══════════════════════════════════════════════════════════════ */
-const SUPABASE_URL = 'https://vmmevqnjmprnhkiikvgd.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_KiEaulEiOX3ZpUNPOu-YdA_y-nH3xDa';
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-const ALL_UNITS = ['ml', 'Litre', 'gram', 'kg', 'piece', 'box', 'bucket'];
-let SETTINGS = { shop_name: 'Finora Paints', owner_name: 'Owner', gst_enabled: false, gst_rate: 18 };
-const DB = { customers: [], retailers: [], suppliers: [], products: [], invoices: [], invoice_items: [], payments: [], supplier_invoices: [], supplier_invoice_items: [], supplier_payments: [], returns: [], expenses: [] };
-let SESSION = null;
-window.DB_SYNCED = false;
-
-/* ══════════════════════════════════════════════════════════════
    2. UTILITIES
    ══════════════════════════════════════════════════════════════ */
 const $ = (s, r = document) => r.querySelector(s);
