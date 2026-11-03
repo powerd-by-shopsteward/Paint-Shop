@@ -2738,8 +2738,8 @@ async function deleteProduct(id) {
 function openProductForm(existing) {
   const isEdit = !!existing;
   const p = existing || {
-    brand_id: null, name: '', category: 'Paint', unit_base: 'kg', // Default to kg
-    batch_managed: true, gst_rate_default: 0, low_stock_alert: SETTINGS.low_stock_alert_default || 5, notes: ''
+    brand_id: null, name: '', category: 'Paint', unit_base: 'kg',
+    batch_managed: true, gst_rate_default: 0, low_stock_alert: 5, notes: ''
   };
 
   const brandOptions = DB.brands.length === 0
@@ -2786,7 +2786,7 @@ function openProductForm(existing) {
 
         <div class="grid-2">
           <div>
-            <label class="label">Base Unit (Weight/Volume)</label>
+            <label class="label">Base Unit</label>
             <select class="input" name="unit_base" id="pf-unit">${unitOptions}</select>
           </div>
           <div>
@@ -2795,30 +2795,25 @@ function openProductForm(existing) {
           </div>
         </div>
 
-        <!-- NON-BATCH PRICING (Shows instantly when toggle is off) -->
         <div id="pf-pricing-block" style="display:${isBatchManaged ? 'none' : 'block'};padding:16px;background:var(--primary-light);border-radius:8px;border:1px solid var(--primary);">
           <div style="font-size:12px;font-weight:700;color:var(--primary);margin-bottom:12px;text-transform:uppercase;">Pricing & Stock</div>
           
           <div class="grid-2" style="margin-bottom:12px;">
             <div>
-              <label class="label">How many units in 1 Pack?</label>
-              <input class="input" type="number" step="any" min="1" name="pack_size" id="pf-pack" value="1" placeholder="e.g. 10 (for a 10kg bucket)">
-              <div class="field-hint">Leave 1 if selling loose (per kg)</div>
+              <label class="label">Units in 1 Pack</label>
+              <input class="input" type="number" step="any" min="1" name="pack_size" id="pf-pack" value="1" placeholder="e.g. 10">
             </div>
             <div>
-              <label class="label">Opening Stock (in Packs)</label>
-              <input class="input" type="number" step="any" min="0" name="stock" id="pf-stock" value="0" placeholder="e.g. 10 buckets">
+              <label class="label">Opening Stock (Packs)</label>
+              <input class="input" type="number" step="any" min="0" name="stock" id="pf-stock" value="0">
             </div>
           </div>
 
-          <!-- Live Calculator -->
-          <div id="pf-calc" style="display:none;background:#fff;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;border:1px dashed var(--primary);font-weight:600;color:var(--text-main);">
-            <!-- JS updates this -->
-          </div>
+          <div id="pf-calc" style="display:none;background:#fff;padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;border:1px dashed var(--primary);font-weight:600;color:var(--text-main);"></div>
 
           <div class="grid-2" style="margin-bottom:12px;">
             <div>
-              <label class="label">Cost Price (₹ / Pack)</label>
+              <label class="label">Cost (₹ / Pack)</label>
               <input class="input" type="number" step="any" min="0" name="cost" value="0">
             </div>
             <div>
@@ -2826,14 +2821,11 @@ function openProductForm(existing) {
               <input class="input" type="number" step="any" min="0" name="selling_price" value="0">
             </div>
           </div>
-          <div class="grid-2">
-             <div>
-              <label class="label">MRP (₹ / Pack)</label>
-              <input class="input" type="number" step="any" min="0" name="mrp" value="0">
-            </div>
+          <div>
+            <label class="label">MRP (₹ / Pack)</label>
+            <input class="input" type="number" step="any" min="0" name="mrp" value="0">
           </div>
         </div>
-
       </form>
     </div>
 
@@ -2867,9 +2859,7 @@ function openProductForm(existing) {
     if (unitSelect) unitSelect.addEventListener('change', updateCalculator);
 
     if (toggle) {
-      toggle.onchange = (e) => {
-        block.style.display = e.target.checked ? 'none' : 'block';
-      };
+      toggle.onchange = (e) => { block.style.display = e.target.checked ? 'none' : 'block'; };
     }
 
     root.querySelector('#pf-save').onclick = async () => {
@@ -2898,7 +2888,6 @@ function openProductForm(existing) {
       btn.disabled = true;
       btn.textContent = 'Saving...';
 
-      // 1. Save Product
       let res;
       if (isEdit) res = await sb.from('products').update(data).eq('id', existing.id).select().single();
       else        res = await sb.from('products').insert(data).select().single();
@@ -2909,35 +2898,33 @@ function openProductForm(existing) {
         return;
       }
 
-      // 2. Auto-create hidden variant if NON-BATCH
       if (!isBatchNow && !isEdit) {
         await sb.from('variants').insert({
           product_id:      res.data.id,
           shade_name:      '',
           pack_size:       packSize,
           pack_unit:       baseUnit,
-          conversion_factor: packSize, // Crucial for invoice deductions
+          conversion_factor: packSize,
           loose_unit:      baseUnit,
           cost:            Number(fd.get('cost')) || 0,
           mrp:             Number(fd.get('mrp')) || 0,
           selling_price:   Number(fd.get('selling_price')) || 0,
-          stock:           totalBaseStock, // Save the calculated total (e.g. 100)
+          stock:           totalBaseStock,
           low_stock_alert: data.low_stock_alert
         });
       }
 
-           await syncDB();
+      await syncDB();
       toast(isEdit ? 'Product updated' : 'Product added', 'success');
       closeModal(root);
 
-      // If it's a new batch product, send them straight to add sizes (1L, 4L, etc.)
       if (!isEdit && isBatchNow) {
-        toast('Now add shades or sizes for this product', 'info');
+        toast('Now add sizes for this product', 'info');
         location.hash = '#/product/' + res.data.id + '/variants';
       } else {
         route();
       }
-    }:
+    };
   });
 }
 /* ══════════════════════════════════════════════════════════════════
