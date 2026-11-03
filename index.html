@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
+  <!-- Core Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
@@ -28,6 +29,14 @@
   <div id="cmdk-root"></div>
   <div id="loadbar" class="loadbar" aria-hidden="true"></div>
 
+  <!-- Initialize Supabase HERE to guarantee it loads before app.js -->
+  <script>
+    const SUPABASE_URL = 'https://vmmevqnjmprnhkiikvgd.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_KiEaulEiOX3ZpUNPOu-YdA_y-nH3xDa';
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  </script>
+
+  <!-- Load App Logic -->
   <script src="app.js"></script>
 </body>
 </html>
