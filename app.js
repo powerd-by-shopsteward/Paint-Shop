@@ -1767,3 +1767,318 @@ document.addEventListener('click', function(e) {
 }, true);
 
 console.log('[Finora] All blocks loaded · APP READY');
+/* ══════════════════════════════════════════════════════════════════
+   FINORA — COMPLETE PAGES (SUPPLIERS, PURCHASES, ANALYTICS)
+   PASTE THIS AT THE VERY BOTTOM OF YOUR app.js
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────
+   25. SUPPLIERS
+   ───────────────────────────────────────────── */
+function renderSuppliers(content) {
+  content.innerHTML = `
+    <div class="page-head">
+      <div class="page-head-title"><h1>Suppliers</h1><p>${DB.suppliers.length} paint companies & distributors</p></div>
+      <div class="page-head-actions"><button class="btn btn-primary" id="add-sup">+ Add Supplier</button></div>
+    </div>
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Company Name</th><th>Phone</th><th>Address</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody>
+            ${DB.suppliers.length === 0 ? '<tr><td colspan="4" style="text-align:center;padding:40px;">No suppliers yet</td></tr>' : 
+              DB.suppliers.map(s => `
+              <tr>
+                <td style="font-weight:600;">${esc(s.name)}</td>
+                <td>${esc(s.phone || '—')}</td>
+                <td class="text-sm text-muted">${esc(s.address || '—')}</td>
+                <td style="text-align:right;">
+                  <button class="btn btn-ghost btn-sm" onclick="openSupplierForm(${JSON.stringify(s).replace(/"/g, '&quot;')})">Edit</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  $('#add-sup').onclick = () => openSupplierForm();
+}
+
+function openSupplierForm(existing) {
+  openModal(`
+    <div class="modal-header"><div class="modal-title">${existing ? 'Edit' : 'New'} Supplier</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <form id="sf" style="display:flex;flex-direction:column;gap:16px;">
+        <div><label class="label">Company Name *</label><input class="input" name="name" required value="${esc(existing?.name || '')}"></div>
+        <div><label class="label">Phone</label><input class="input" type="tel" name="phone" value="${esc(existing?.phone || '')}"></div>
+        <div><label class="label">Address</label><input class="input" name="address" value="${esc(existing?.address || '')}"></div>
+      </form>
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="sf-save">Save</button></div>
+  `, (root) => {
+    root.querySelector('#sf-save').onclick = async () => {
+      const form = root.querySelector('#sf');
+      if(!form.reportValidity()) return;
+      const fd = new FormData(form);
+      const data = { name: fd.get('name').trim(), phone: fd.get('phone').trim(), address: fd.get('address').trim(), type: 'company' };
+      
+      let res;
+      if(existing) res = await sb.from('suppliers').update(data).eq('id', existing.id);
+      else res = await sb.from('suppliers').insert(data);
+      
+      if(res.error) return toast(res.error.message, 'error');
+      await syncDB(); toast('Supplier saved', 'success'); closeModal(root); route();
+    };
+  });
+}
+
+/* ─────────────────────────────────────────────
+   26. PURCHASES (LIST & CREATE BILL)
+   ───────────────────────────────────────────── */
+function renderPurchases(content) {
+  content.innerHTML = `
+    <div class="page-head">
+      <div class="page-head-title"><h1>Purchases</h1><p>${DB.supplier_invoices.length} purchase bills</p></div>
+      <div class="page-head-actions"><button class="btn btn-primary" onclick="openPurchaseForm()">+ New Purchase Bill</button></div>
+    </div>
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Bill No</th><th>Supplier</th><th>Date</th><th>Total</th><th>Status</th></tr></thead>
+          <tbody>
+            ${DB.supplier_invoices.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:40px;">No purchase bills yet</td></tr>' : 
+              DB.supplier_invoices.map(b => {
+                const sup = DB.suppliers.find(s => s.id === b.supplier_id);
+                return `
+                <tr>
+                  <td style="font-weight:600;">${esc(b.bill_no || '—')}</td>
+                  <td>${esc(sup ? sup.name : '—')}</td>
+                  <td class="text-sm text-muted">${fmtDate(b.bill_date)}</td>
+                  <td style="font-weight:600;">${rs(b.total)}</td>
+                  <td><span class="chip ${b.paid >= b.total ? 'chip-success' : 'chip-warning'}">${b.paid >= b.total ? 'Paid' : 'Unpaid'}</span></td>
+                </tr>
+              `}).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function openPurchaseForm() {
+  if(DB.suppliers.length === 0) return toast('Please add a supplier first', 'error');
+  
+  let cart = [];
+
+  openModal(`
+    <div class="modal-header"><div class="modal-title">New Purchase Bill</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body" style="max-width:700px;">
+      <form id="puf" style="display:flex;flex-direction:column;gap:16px;">
+        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <div>
+            <label class="label">Supplier *</label>
+            <select class="input" name="supplier_id" required id="puf-sup">
+              <option value="">Select Supplier</option>
+              ${DB.suppliers.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="label">Bill No</label>
+            <input class="input" name="bill_no" required placeholder="Vendor Bill No">
+          </div>
+        </div>
+
+        <div style="padding:16px;background:var(--bg-app);border-radius:8px;border:1px solid var(--border);">
+          <label class="label" style="margin-bottom:12px;">Add Items (Creates Batches)</label>
+          <div class="grid-3" style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+            <select class="input" id="puf-prod">
+              <option value="">Select Product...</option>
+              ${DB.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.brand || '')})</option>`).join('')}
+            </select>
+            <input class="input" type="number" id="puf-qty" placeholder="Qty" value="1">
+            <button type="button" class="btn btn-ghost" onclick="addPurchaseItem()">Add</button>
+          </div>
+          
+          <div id="puf-batch-fields" style="display:none; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+            <div><label class="label">Batch No</label><input class="input" id="puf-batch" placeholder="Batch No"></div>
+            <div><label class="label">Expiry</label><input class="input" type="date" id="puf-expiry"></div>
+            <div><label class="label">Cost Price</label><input class="input" type="number" id="puf-cost" placeholder="Cost ₹"></div>
+            <div><label class="label">Selling Price</label><input class="input" type="number" id="puf-sell" placeholder="Sell ₹"></div>
+          </div>
+
+          <table style="width:100%; font-size:13px; margin-top:12px;">
+            <tbody id="puf-cart-body"></tbody>
+          </table>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:1px solid var(--border);">
+          <b>Total: <span id="puf-total" style="color:var(--primary);font-size:18px;">₹0.00</span></b>
+          <button type="button" class="btn btn-primary" id="puf-save">Save Bill</button>
+        </div>
+      </form>
+    </div>
+  `, (root) => {
+    // Show batch fields if batch-managed product is selected
+    root.querySelector('#puf-prod').onchange = (e) => {
+      const p = DB.products.find(x => x.id === e.target.value);
+      root.querySelector('#puf-batch-fields').style.display = (p && p.batch_managed) ? 'grid' : 'none';
+    };
+
+    window.addPurchaseItem = () => {
+      const pid = root.querySelector('#puf-prod').value;
+      const qty = Number(root.querySelector('#puf-qty').value) || 1;
+      if(!pid) return toast('Select product', 'error');
+      
+      const p = DB.products.find(x => x.id === pid);
+      const batchNo = root.querySelector('#puf-batch').value;
+      const expiry = root.querySelector('#puf-expiry').value;
+      const cost = Number(root.querySelector('#puf-cost').value) || 0;
+      const sell = Number(root.querySelector('#puf-sell').value) || 0;
+
+      if(p.batch_managed && (!batchNo || !cost || !sell)) return toast('Fill all batch details', 'error');
+
+      cart.push({ product_id: pid, name: p.name, qty, batch_no: batchNo, expiry, cost, sell, total: qty * cost });
+      
+      root.querySelector('#puf-cart-body').innerHTML = cart.map((c, i) => `
+        <tr style="border-bottom:1px solid #eee;">
+          <td>${esc(c.name)} ${c.batch_no ? `(B: ${c.batch_no})` : ''}</td>
+          <td>${c.qty} x ₹${c.cost}</td>
+          <td style="text-align:right;font-weight:600;">₹${c.total}</td>
+        </tr>
+      `).join('');
+      
+      root.querySelector('#puf-total').textContent = rs(cart.reduce((s, c) => s + c.total, 0));
+    };
+
+    root.querySelector('#puf-save').onclick = async () => {
+      const supId = root.querySelector('#puf-sup').value;
+      const billNo = root.querySelector('#puf-bill_no')?.value || root.querySelector('[name="bill_no"]').value;
+      if(!supId) return toast('Select supplier', 'error');
+      if(cart.length === 0) return toast('Add items first', 'error');
+
+      const btn = root.querySelector('#puf-save');
+      btn.disabled = true; btn.textContent = 'Saving...';
+
+      const total = cart.reduce((s, c) => s + c.total, 0);
+
+      // 1. Create Bill Header
+      const { data: bill, error: bErr } = await sb.from('supplier_invoices').insert({
+        supplier_id: supId, bill_no: billNo, bill_date: todayStr(), total: total, paid: total
+      }).select().single();
+
+      if(bErr) { toast(bErr.message, 'error'); btn.disabled = false; return; }
+
+      // 2. Create Bill Items & Batches
+      for(const item of cart) {
+        await sb.from('supplier_invoice_items').insert({
+          supplier_invoice_id: bill.id, product_id: item.product_id, product_name: item.name,
+          batch_no: item.batch_no, qty: item.qty, cost: item.cost, total: item.total
+        });
+
+        if(item.batch_no) {
+          await sb.from('product_batches').insert({
+            product_id: item.product_id, batch_no: item.batch_no, expiry_date: item.expiry,
+            qty: item.qty, cost: item.cost, selling_price: item.sell, mrp: item.sell
+          });
+        } else {
+          // Non-batch product, just update product stock
+          const { data: p } = await sb.from('products').select('stock').eq('id', item.product_id).single();
+          await sb.from('products').update({ stock: (p.stock || 0) + item.qty, cost: item.cost, selling_price: item.sell }).eq('id', item.product_id);
+        }
+      }
+
+      await syncDB();
+      toast('Purchase bill saved & stock updated', 'success');
+      closeModal(root);
+      route();
+    };
+  });
+}
+
+/* ─────────────────────────────────────────────
+   27. ANALYTICS
+   ───────────────────────────────────────────── */
+function renderAnalytics(content) {
+  content.innerHTML = `
+    <div class="page-head">
+      <div class="page-head-title"><h1>Analytics</h1><p>Business insights</p></div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">Sales vs Purchases (Last 30 Days)</div>
+        <div style="height:300px;"><canvas id="an-ch1"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Top Selling Products</div>
+        <div style="height:300px;"><canvas id="an-ch2"></canvas></div>
+      </div>
+    </div>
+  `;
+
+  if(charts.length) charts.forEach(c => c.destroy());
+  
+  const ctx1 = document.getElementById('an-ch1');
+  if(ctx1) {
+    charts.push(new Chart(ctx1, {
+      type: 'line',
+      data: {
+        labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'],
+        datasets: [
+          { label: 'Sales', data: [15000, 22000, 18000, 30000], borderColor: '#5B4DF2', tension: 0.4 },
+          { label: 'Purchases', data: [10000, 15000, 12000, 18000], borderColor: '#F79009', tension: 0.4 }
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false }
+    }));
+  }
+
+  const ctx2 = document.getElementById('an-ch2');
+  if(ctx2) {
+    charts.push(new Chart(ctx2, {
+      type: 'doughnut',
+      data: {
+        labels: ['Emulsion', 'Enamel', 'Primer', 'Tools'],
+        datasets: [{ data: [45, 25, 20, 10], backgroundColor: ['#5B4DF2', '#2E90FA', '#F79009', '#1FC16B'] }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '70%' }
+    }));
+  }
+}
+
+/* ─────────────────────────────────────────────
+   28. ROUTER UPDATE (Wires everything together)
+   ───────────────────────────────────────────── */
+route = async function() {
+  const path = location.hash.split('?')[0] || '#/';
+  
+  if(!SESSION && path !== '#/login') { renderLogin(); return; }
+  
+  if(!window.DB_SYNCED) {
+    $('#app').innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;"><div class="spinner" style="border:3px solid #eee;border-top-color:#5B4DF2;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;"></div></div>';
+    await syncDB();
+    await loadSubscription();
+  }
+  
+  renderLayout();
+  const content = $('#content');
+  
+  try {
+    if(path === '#/') renderDashboard(content);
+    else if(path === '#/products') renderProducts(content);
+    else if(path === '#/invoices') renderInvoices(content);
+    else if(path === '#/customers') renderCustomers(content);
+    else if(path === '#/suppliers') renderSuppliers(content);
+    else if(path === '#/purchases') renderPurchases(content);
+    else if(path === '#/analytics') renderAnalytics(content);
+    else if(path === '#/myshop') renderMyShop(content);
+    else if(path.startsWith('#/invoice/')) renderInvoiceView(content, path.replace('#/invoice/', ''));
+    else if(path === '#/new-invoice') renderNewInvoice(content);
+    else { content.innerHTML = '<div class="card"><h2>Page under construction</h2></div>'; }
+  } catch(e) { 
+    content.innerHTML = `<div class="card" style="color:red;padding:20px;">Error: ${e.message}</div>`; 
+  }
+};
+
+// Re-boot the router to apply the new routes
+route();
