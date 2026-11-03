@@ -1,32 +1,99 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- ════════════════════════════════════════════════════════════════
+       PAINTBOOK — Shop Manager
+       FILE: index.html
+       ════════════════════════════════════════════════════════════════ -->
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Finora — Paint Shop</title>
-  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#5B5BD6">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>PaintBook — Shop Manager</title>
+
+  <!-- Favicon (🎨 paint palette) -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎨</text></svg>">
+
+  <!-- Google Fonts (Inter) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.1/dist/jspdf.plugin.autotable.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
+  <!-- Pinned CDN dependencies -->
+  <!-- Supabase client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+
+  <!-- Charts (dashboard/reports) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <!-- PDF (A4 invoices + reports) -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+
+  <!-- QR (UPI subscription) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+
+  <!-- App styles -->
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- App roots -->
   <div id="app"></div>
   <div id="modal-root"></div>
   <div id="toast-root"></div>
 
+  <!-- Thermal print sandbox -->
+  <div id="print-root" style="display:none"></div>
+  <div id="print-area" style="display:none"></div>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       CONFIGURATION — replace before deploy
+       Get these from your fresh Supabase project:
+       Project Settings → API → Project URL + anon public key
+       ════════════════════════════════════════════════════════════════ -->
   <script>
-    window.APP_CONFIG = {
-      SUPABASE_URL: 'https://vmmevqnjmprnhkiikvgd.supabase.co',
-      SUPABASE_ANON_KEY: 'sb_publishable_KiEaulEiOX3ZpUNPOu-YdA_y-nH3xDa'
+    /* ⚠️ RLS on all tables is what keeps this safe. Do not rely on client-side code. */
+    const CONFIG = {
+      SUPABASE_URL:      'https://vmmevqnjmprnhkiikvgd.supabase.co',
+      SUPABASE_ANON_KEY: 'sb_publishable_KiEaulEiOX3ZpUNPOu-YdA_y-nH3xDa',
+
+      // Subscription plan
+      SUB_PLAN_AMOUNT:       599,
+      SUB_OWNER_UPI:         'shopsteward.in@ybl',
+      SUB_OWNER_NAME:        'Samiran Das',
+      SUB_SUPPORT_WHATSAPP:  '918637560557',
+      SUB_SUPPORT_EMAIL:     'shopsteward.in@gmail.com',
+
+      // Defaults
+      DEFAULT_LOW_STOCK_ALERT: 5,
+      DEFAULT_GST_RATE:        0
     };
+    window.APP_CONFIG = CONFIG;
   </script>
+
+  <!-- Fatal error fallback (so we never see a white screen) -->
+  <script>
+    window.addEventListener('error', function (e) {
+      const app = document.getElementById('app');
+      if (app && !app.innerHTML.trim()) {
+        app.innerHTML =
+          '<div style="padding:40px;font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;">' +
+            '<h1 style="color:#dc2626;">⚠️ PaintBook failed to boot</h1>' +
+            '<pre style="background:#fef2f2;border:1px solid #fecaca;padding:16px;border-radius:8px;font-family:monospace;font-size:12px;overflow:auto;color:#991b1b;white-space:pre-wrap;">' +
+              (e.message || 'Unknown error') + '\n\n' + (e.filename || '') + ':' + (e.lineno || '') +
+            '</pre>' +
+            '<p style="color:#6b7280;font-size:13px;">Open DevTools (F12 → Console) for full details.</p>' +
+          '</div>';
+      }
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      console.error('[PaintBook] Unhandled promise rejection:', e.reason);
+    });
+  </script>
+
+  <!-- App logic (Step 3) -->
   <script src="app.js"></script>
 </body>
 </html>
