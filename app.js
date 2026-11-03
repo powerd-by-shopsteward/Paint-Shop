@@ -203,7 +203,8 @@ function applyFavicon() {
     link.rel = 'icon';
     document.head.appendChild(link);
   }
-  link.href = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎨</text></svg>";
+  link.href = (SETTINGS && SETTINGS.logo) || 
+    "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎨</text></svg>";
 }
 
 /* ─────────────────────────────────────────────
@@ -642,8 +643,8 @@ function renderLayout() {
     <div class="layout">
       <aside class="sidebar" id="sidebar">
         <div class="brand" style="padding:24px 16px;border-bottom:none;gap:12px;overflow:hidden;width:100%;">
-          <div class="brand-logo" style="width:36px;height:36px;background:#5B5BD6;color:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;font-weight:700;">
-            🎨
+                   <div class="brand-logo" style="width:36px;height:36px;background:#5B5BD6;color:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;font-weight:700;overflow:hidden;">
+            ${SETTINGS.logo ? `<img src="${esc(SETTINGS.logo)}" style="width:100%;height:100%;object-fit:cover;">` : '🎨'}
           </div>
           <div class="brand-text" style="font-size:16px;font-weight:700;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">
             ${esc(SETTINGS.shop_name || 'PaintBook')}
@@ -942,6 +943,26 @@ function renderMyShop(content) {
       </div>
     </div>
 
+        <!-- LOGO SECTION -->
+    <div class="card" style="margin-bottom:20px;border-radius:16px;">
+      <div class="card-title">Logo</div>
+      <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;">
+        <div style="width:100px;height:100px;border:1px solid var(--border);border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;font-size:48px;background:var(--bg-app);overflow:hidden;flex-shrink:0;">
+          ${SETTINGS.logo
+            ? `<img src="${esc(SETTINGS.logo)}" style="max-width:100%;max-height:100%;object-fit:contain;" alt="Shop logo">`
+            : '🎨'}
+        </div>
+        <div style="flex:1;min-width:200px;">
+          <input type="file" id="logo-input" accept="image/png, image/jpeg, image/webp" style="display:none;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button id="btn-upload" class="btn btn-primary">📁 Upload Logo</button>
+            ${SETTINGS.logo ? '<button id="btn-remove-logo" class="btn btn-ghost" style="color:var(--danger);">Remove</button>' : ''}
+          </div>
+          <p class="field-hint" style="margin-top:8px;">PNG, JPG, or WebP. Max 500 KB. Will appear on invoices, dashboard, and thermal print.</p>
+        </div>
+      </div>
+    </div>
+
     <div class="card" style="margin-bottom:20px;border-radius:16px;">
       <div class="card-title">Shop Details</div>
       <form id="shop-form" style="display:flex;flex-direction:column;gap:16px;">
@@ -1029,6 +1050,55 @@ function renderMyShop(content) {
     </div>
   `;
 
+  // ── LOGO UPLOAD LOGIC ──
+  const uploadBtn = $('#btn-upload');
+  const logoInput = $('#logo-input');
+  if (uploadBtn && logoInput) {
+    uploadBtn.onclick = () => logoInput.click();
+    logoInput.onchange = (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+
+      const ALLOWED = ['image/png', 'image/jpeg', 'image/webp'];
+      if (!ALLOWED.includes(f.type)) {
+        toast('Only PNG, JPG, or WebP images are allowed.', 'error');
+        e.target.value = '';
+        return;
+      }
+      if (f.size > 1024 * 500) {
+        toast('Image too large (max 500 KB). Please compress.', 'error');
+        e.target.value = '';
+        return;
+      }
+
+      const r = new FileReader();
+      r.onload = async (ev) => {
+        SETTINGS.logo = ev.target.result;
+        const ok = await saveSettings();
+        if (ok) {
+          applyFavicon();
+          toast('Logo updated', 'success');
+          route();
+        }
+      };
+      r.readAsDataURL(f);
+    };
+  }
+
+  const rmBtn = $('#btn-remove-logo');
+  if (rmBtn) {
+    rmBtn.onclick = async () => {
+      if (!confirm('Remove the shop logo?')) return;
+      SETTINGS.logo = '';
+      const ok = await saveSettings();
+      if (ok) {
+        applyFavicon();
+        toast('Logo removed', 'success');
+        route();
+      }
+    };
+  }
+   
   // Shop form save
   $('#shop-form').onsubmit = async (e) => {
     e.preventDefault();
